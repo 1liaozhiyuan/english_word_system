@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.log
+backend/alembic/versions/__pycache__/
+
+node_modules/
+dist/
+
+.env

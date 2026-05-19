@@ -1,0 +1,26 @@
+{
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "type": "module",
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "axios": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-router-dom": "latest",
+    "lucide-react": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "tailwindcss": "latest",
+    "postcss": "latest",
+    "autoprefixer": "latest"
+  }
+}
