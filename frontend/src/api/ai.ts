@@ -1,5 +1,5 @@
 import { api, getAuthHeaders } from './client';
-import type { Word } from '../types';
+import type { AIQuizQuestion, AISavedExample, Word } from '../types';
 
 type StreamHandler = (content: string) => void;
 type StreamOptions = { signal?: AbortSignal };
@@ -55,6 +55,54 @@ export async function generateQuiz(
     onUpdate,
     signal: options?.signal,
   });
+}
+
+export async function generateStructuredQuiz(token: string, words: Word[], quizType = '混合测试') {
+  const { data } = await api.post<{ questions: AIQuizQuestion[] }>(
+    '/ai/generate-quiz/structured',
+    { words, quiz_type: quizType },
+    { headers: getAuthHeaders(token), timeout: AI_RESPONSE_TIMEOUT_MS },
+  );
+  return data.questions;
+}
+
+export async function saveAIExample(
+  token: string,
+  payload: {
+    word_id: number;
+    sentence: string;
+    translation?: string | null;
+    raw_content?: string | null;
+    source?: string;
+  },
+) {
+  const { data } = await api.post<AISavedExample>('/ai/examples', payload, {
+    headers: getAuthHeaders(token),
+  });
+  return data;
+}
+
+export async function getAIExamples(token: string, wordId: number) {
+  const { data } = await api.get<AISavedExample[]>(`/words/${wordId}/ai-examples`, {
+    headers: getAuthHeaders(token),
+  });
+  return data;
+}
+
+export async function deleteAIExample(token: string, exampleId: number) {
+  const { data } = await api.delete<{ status: string }>(`/ai/examples/${exampleId}`, {
+    headers: getAuthHeaders(token),
+  });
+  return data;
+}
+
+export async function recordAIQuestionAttempt(token: string, questionId: string, answer: string) {
+  const { data } = await api.post<{ id: number; question_id: number; answer: string; is_correct: boolean; created_at: string }>(
+    `/ai/questions/${questionId}/attempt`,
+    { answer },
+    { headers: getAuthHeaders(token) },
+  );
+  return data;
 }
 
 async function streamAI({

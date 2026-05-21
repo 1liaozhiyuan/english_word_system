@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, File, Form, Query, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session
@@ -12,30 +12,63 @@ from app.ai_service import (
     explain_word_prompt,
     generate_example_prompt,
     generate_quiz_prompt,
+    generate_structured_quiz_prompt,
+    parse_structured_quiz,
     stream_ai,
 )
 from app.core.config import settings
 from app.core.security import create_access_token
 from app.db.session import engine, get_session
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_admin
 from app.models import User
 from app.models import UserWordProgress
 from app.schemas import (
+    AccountDelete,
     AnswerCreate,
     AnswerResult,
     AIExamplePayload,
     AIMistakePayload,
+    AIQuestionAttemptCreate,
+    AIQuestionAttemptRead,
+    AdminOperationLogRead,
+    AdminUserRoleUpdate,
     AIQuizPayload,
+    AIQuizStructuredResponse,
+    AISavedExampleCreate,
+    AISavedExampleRead,
     AITextResponse,
     AIWordPayload,
     BatchDeleteWordBooks,
     BatchDeleteWords,
     BatchMoveWords,
+    CheckInStatusRead,
+    ContentReportCreate,
+    ContentReportRead,
+    ContentReportUpdate,
     DataImportResult,
+    FeedbackCreate,
+    FeedbackRead,
+    LearningPlanRead,
+    LearningReportRead,
+    ListeningAnswerCreate,
+    ListeningAnswerResult,
+    ListeningQuestionRead,
+    MembershipOrderCreate,
+    MembershipOrderRead,
+    MembershipPlanRead,
+    MembershipRead,
+    NotificationRead,
+    NotificationSummary,
     PasswordChange,
     PasswordReset,
     PasswordResetRequest,
+    ReadingArticleRead,
+    ReadingCompleteCreate,
+    ReadingProgressRead,
     ReviewLogRead,
+    SpeakingAttemptCreate,
+    SpeakingAttemptRead,
+    SpeakingPromptRead,
     StatsOverview,
     StudyItem,
     TokenResponse,
@@ -51,6 +84,7 @@ from app.schemas import (
     WordBookProgressRead,
     WordBookRead,
     WordBookUpdate,
+    WordDetailRead,
     WordProgressRead,
     WordRead,
     WordUpdate,
@@ -58,28 +92,47 @@ from app.schemas import (
 from app.services import (
     add_word_to_book,
     answer_word,
+    answer_listening_question,
     authenticate_user,
     batch_delete_word_books,
     batch_delete_words,
     batch_move_words,
+    activate_demo_membership,
     change_password,
+    create_feedback,
+    create_admin_operation_log,
+    create_content_report,
+    create_demo_membership_order,
+    delete_user_account,
+    delete_ai_example,
     delete_word_book,
     export_user_anki_tsv,
     export_user_data,
     export_word_book_csv,
+    complete_reading_article,
+    ensure_default_reading_articles,
     get_due_study_items,
     favorite_word,
     get_favorite_words_paginated,
     get_due_new_items,
     get_due_review_items,
+    get_admin_overview,
+    get_check_in_status,
+    get_learning_plan,
+    get_learning_report,
+    get_listening_questions,
     get_mistakes,
     get_mistakes_paginated,
+    get_membership_status,
     get_or_create_user_settings,
     get_review_history,
     get_review_history_paginated,
+    get_reading_article,
+    get_speaking_prompts,
     get_stats,
     get_word_book_progress_summary,
     get_word_book_with_count,
+    get_word_detail_for_user,
     import_user_data,
     import_word_book_from_csv,
     parse_word_book_csv,
@@ -89,7 +142,20 @@ from app.services import (
     list_word_book_words,
     list_word_books,
     list_word_books_paginated,
+    list_admin_ai_usage,
+    list_admin_feedback,
+    list_admin_operation_logs,
+    list_admin_orders,
+    list_admin_content_reports,
+    list_admin_users,
+    list_membership_plans,
+    list_notifications,
+    list_reading_articles,
+    list_speaking_attempts,
+    list_user_orders,
+    mark_notification_read,
     register_user,
+    record_ai_usage,
     remove_word_from_book,
     request_password_reset,
     reset_password,
@@ -99,9 +165,17 @@ from app.services import (
     search_word_book_words,
     seed_demo_data,
     select_word_book,
+    submit_speaking_attempt,
+    list_ai_examples_for_word,
+    save_ai_example,
+    save_ai_questions,
+    record_ai_question_attempt,
     update_word_book,
     update_word,
     update_user_settings,
+    update_feedback_status,
+    update_content_report_status,
+    update_admin_user_role,
     is_favorite_word,
     unfavorite_word,
 )
@@ -111,6 +185,7 @@ from app.services import (
 async def lifespan(app: FastAPI):
     with Session(engine) as session:
         seed_demo_data(session)
+        ensure_default_reading_articles(session)
     yield
 
 
@@ -197,9 +272,19 @@ def do_change_password(
     return {"status": "password_changed"}
 
 
+@app.delete("/auth/account")
+def delete_account(
+    payload: AccountDelete,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, str]:
+    delete_user_account(session, current_user, payload.password)
+    return {"status": "account_deleted"}
+
+
 @app.get("/me", response_model=UserRead)
 def me(current_user: User = Depends(get_current_user)) -> UserRead:
-    return UserRead(id=current_user.id, email=current_user.email)
+    return UserRead(id=current_user.id, email=current_user.email, role=current_user.role)
 
 
 # ── Settings ──
@@ -231,6 +316,252 @@ def patch_settings(
         payload.speech_accent,
         payload.answer_delay_ms,
         payload.word_book_page_size,
+        payload.onboarding_completed,
+        payload.learning_goal,
+        payload.english_level,
+        payload.exam_type,
+        payload.target_date,
+        payload.daily_minutes,
+        payload.wants_speaking,
+        payload.wants_listening,
+        payload.wants_ai_tutor,
+        payload.reminder_enabled,
+        payload.reminder_time,
+        payload.membership_tier,
+        payload.membership_expires_at,
+    )
+
+
+@app.post("/feedback", response_model=FeedbackRead)
+def submit_feedback(
+    payload: FeedbackCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> FeedbackRead:
+    return create_feedback(
+        session,
+        current_user,
+        payload.category,
+        payload.content,
+        payload.contact,
+    )
+
+
+@app.post("/content-reports", response_model=ContentReportRead)
+def submit_content_report(
+    payload: ContentReportCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> ContentReportRead:
+    report = create_content_report(
+        session,
+        current_user,
+        payload.source_type,
+        payload.content,
+        payload.reason,
+        payload.source_id,
+    )
+    return ContentReportRead(
+        id=report.id,
+        user_id=report.user_id,
+        user_email=current_user.email,
+        source_type=report.source_type,
+        source_id=report.source_id,
+        reason=report.reason,
+        content=report.content,
+        status=report.status,
+        reviewer_user_id=report.reviewer_user_id,
+        review_note=report.review_note,
+        created_at=report.created_at,
+        updated_at=report.updated_at,
+    )
+
+
+@app.get("/membership/status", response_model=MembershipRead)
+def membership_status(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> MembershipRead:
+    return MembershipRead(**get_membership_status(session, current_user))
+
+
+@app.get("/membership/plans", response_model=list[MembershipPlanRead])
+def membership_plans(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[MembershipPlanRead]:
+    return list_membership_plans(session)
+
+
+@app.get("/membership/orders", response_model=list[MembershipOrderRead])
+def membership_orders(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[MembershipOrderRead]:
+    return list_user_orders(session, current_user)
+
+
+@app.post("/membership/orders/demo-pay", response_model=MembershipOrderRead)
+def membership_demo_pay(
+    payload: MembershipOrderCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> MembershipOrderRead:
+    order = create_demo_membership_order(session, current_user, payload.plan_id)
+    return list_user_orders(session, current_user)[0]
+
+
+@app.post("/membership/demo-upgrade", response_model=MembershipRead)
+def membership_demo_upgrade(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> MembershipRead:
+    activate_demo_membership(session, current_user)
+    return MembershipRead(**get_membership_status(session, current_user))
+
+
+# ─── Admin ───
+
+@app.get("/admin/overview")
+def admin_overview(
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict:
+    return get_admin_overview(session)
+
+
+@app.get("/admin/users")
+def admin_users(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    q: str = Query(default="", min_length=0),
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict:
+    return list_admin_users(session, page, page_size, q)
+
+
+@app.get("/admin/word-books")
+def admin_word_books(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    q: str = Query(default="", min_length=0),
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict:
+    return list_word_books_paginated(session, page, page_size, q)
+
+
+@app.get("/admin/feedback")
+def admin_feedback(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    status_filter: str = Query(default="all"),
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict:
+    return list_admin_feedback(session, page, page_size, status_filter)
+
+
+@app.patch("/admin/feedback/{feedback_id}")
+def admin_feedback_status(
+    feedback_id: int,
+    status: str = Query(...),
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict:
+    feedback = update_feedback_status(session, feedback_id, status)
+    create_admin_operation_log(session, current_user, "update_feedback_status", "feedback", feedback_id, status)
+    return {"id": feedback.id, "status": feedback.status}
+
+
+@app.get("/admin/ai-usage")
+def admin_ai_usage(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict:
+    return list_admin_ai_usage(session, page, page_size)
+
+
+@app.patch("/admin/users/{user_id}/role", response_model=UserRead)
+def admin_update_user_role(
+    user_id: int,
+    payload: AdminUserRoleUpdate,
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> UserRead:
+    user = update_admin_user_role(session, current_user, user_id, payload.role)
+    return UserRead(id=user.id, email=user.email, role=user.role)
+
+
+@app.get("/admin/operation-logs")
+def admin_operation_logs(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict:
+    return list_admin_operation_logs(session, page, page_size)
+
+
+@app.get("/admin/orders")
+def admin_orders(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict:
+    return list_admin_orders(session, page, page_size)
+
+
+@app.get("/admin/membership-plans", response_model=list[MembershipPlanRead])
+def admin_membership_plans(
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> list[MembershipPlanRead]:
+    return list_membership_plans(session, active_only=False)
+
+
+@app.get("/admin/content-reports")
+def admin_content_reports(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    status_filter: str = Query(default="all"),
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> dict:
+    return list_admin_content_reports(session, page, page_size, status_filter)
+
+
+@app.patch("/admin/content-reports/{report_id}", response_model=ContentReportRead)
+def admin_update_content_report(
+    report_id: int,
+    payload: ContentReportUpdate,
+    current_user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> ContentReportRead:
+    report = update_content_report_status(
+        session,
+        current_user,
+        report_id,
+        payload.status,
+        payload.review_note,
+    )
+    return ContentReportRead(
+        id=report.id,
+        user_id=report.user_id,
+        user_email=None,
+        source_type=report.source_type,
+        source_id=report.source_id,
+        reason=report.reason,
+        content=report.content,
+        status=report.status,
+        reviewer_user_id=report.reviewer_user_id,
+        review_note=report.review_note,
+        created_at=report.created_at,
+        updated_at=report.updated_at,
     )
 
 
@@ -441,6 +772,15 @@ def patch_word(
     session: Session = Depends(get_session),
 ) -> WordRead:
     return update_word(session, word_id, payload.model_dump(exclude_unset=True))
+
+
+@app.get("/words/{word_id}", response_model=WordDetailRead)
+def word_detail(
+    word_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> WordDetailRead:
+    return WordDetailRead(**get_word_detail_for_user(session, current_user, word_id))
 
 
 @app.delete("/word-books/{word_book_id}/words/{word_id}")
@@ -732,6 +1072,138 @@ def stats(
     return StatsOverview(**get_stats(session, current_user))
 
 
+@app.get("/learning-plan", response_model=LearningPlanRead)
+def learning_plan(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> LearningPlanRead:
+    return LearningPlanRead(**get_learning_plan(session, current_user))
+
+
+@app.get("/check-in/status", response_model=CheckInStatusRead)
+def check_in_status(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> CheckInStatusRead:
+    return CheckInStatusRead(**get_check_in_status(session, current_user))
+
+
+@app.get("/learning-report", response_model=LearningReportRead)
+def learning_report(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> LearningReportRead:
+    return LearningReportRead(**get_learning_report(session, current_user))
+
+
+@app.get("/reading/articles", response_model=list[ReadingArticleRead])
+def reading_articles(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[ReadingArticleRead]:
+    return [ReadingArticleRead(**item) for item in list_reading_articles(session, current_user)]
+
+
+@app.get("/reading/articles/{article_id}", response_model=ReadingArticleRead)
+def reading_article_detail(
+    article_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> ReadingArticleRead:
+    return ReadingArticleRead(**get_reading_article(session, current_user, article_id))
+
+
+@app.post("/reading/articles/{article_id}/complete", response_model=ReadingProgressRead)
+def reading_article_complete(
+    article_id: int,
+    payload: ReadingCompleteCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> ReadingProgressRead:
+    progress = complete_reading_article(session, current_user, article_id, payload.reading_seconds)
+    return ReadingProgressRead(
+        id=progress.id,
+        article_id=progress.article_id,
+        completed_at=progress.completed_at,
+        reading_seconds=progress.reading_seconds,
+    )
+
+
+@app.get("/listening/session", response_model=list[ListeningQuestionRead])
+def listening_session(
+    limit: int = Query(default=10, ge=1, le=30),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[ListeningQuestionRead]:
+    return [ListeningQuestionRead(**item) for item in get_listening_questions(session, current_user, limit)]
+
+
+@app.post("/listening/answer", response_model=ListeningAnswerResult)
+def listening_answer(
+    payload: ListeningAnswerCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> ListeningAnswerResult:
+    return ListeningAnswerResult(
+        **answer_listening_question(
+            session,
+            current_user,
+            payload.word_id,
+            payload.selected_meaning,
+            payload.word_book_id,
+        )
+    )
+
+
+@app.get("/speaking/session", response_model=list[SpeakingPromptRead])
+def speaking_session(
+    limit: int = Query(default=8, ge=1, le=30),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[SpeakingPromptRead]:
+    return [SpeakingPromptRead(**item) for item in get_speaking_prompts(session, current_user, limit)]
+
+
+@app.post("/speaking/attempts", response_model=SpeakingAttemptRead)
+def speaking_attempt(
+    payload: SpeakingAttemptCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> SpeakingAttemptRead:
+    return submit_speaking_attempt(
+        session,
+        current_user,
+        payload.word_id,
+        payload.prompt_text,
+        payload.transcript,
+    )
+
+
+@app.get("/speaking/attempts", response_model=list[SpeakingAttemptRead])
+def speaking_attempts(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[SpeakingAttemptRead]:
+    return list_speaking_attempts(session, current_user)
+
+
+@app.get("/notifications", response_model=NotificationSummary)
+def notifications(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> NotificationSummary:
+    return NotificationSummary(**list_notifications(session, current_user))
+
+
+@app.post("/notifications/{notification_id}/read", response_model=NotificationRead)
+def read_notification(
+    notification_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> NotificationRead:
+    return mark_notification_read(session, current_user, notification_id)
+
+
 # ── Data Export ──
 
 # AI
@@ -740,7 +1212,9 @@ def stats(
 async def ai_explain_word(
     payload: AIWordPayload,
     current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> AITextResponse:
+    record_ai_usage(session, current_user, "explain_word")
     return AITextResponse(content=await call_ai(explain_word_prompt(payload.word)))
 
 
@@ -748,7 +1222,9 @@ async def ai_explain_word(
 async def ai_generate_example(
     payload: AIExamplePayload,
     current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> AITextResponse:
+    record_ai_usage(session, current_user, "generate_example")
     return AITextResponse(content=await call_ai(generate_example_prompt(payload.word, payload.level)))
 
 
@@ -756,7 +1232,9 @@ async def ai_generate_example(
 async def ai_analyze_mistakes(
     payload: AIMistakePayload,
     current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> AITextResponse:
+    record_ai_usage(session, current_user, "analyze_mistakes")
     return AITextResponse(content=await call_ai(analyze_mistakes_prompt(payload.words)))
 
 
@@ -764,16 +1242,84 @@ async def ai_analyze_mistakes(
 async def ai_generate_quiz(
     payload: AIQuizPayload,
     current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> AITextResponse:
+    record_ai_usage(session, current_user, "generate_quiz")
     return AITextResponse(content=await call_ai(generate_quiz_prompt(payload.words, payload.quiz_type)))
+
+
+@app.post("/ai/generate-quiz/structured", response_model=AIQuizStructuredResponse)
+async def ai_generate_quiz_structured(
+    payload: AIQuizPayload,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> AIQuizStructuredResponse:
+    record_ai_usage(session, current_user, "generate_quiz")
+    content = await call_ai(generate_structured_quiz_prompt(payload.words, payload.quiz_type))
+    try:
+        questions = parse_structured_quiz(content)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="AI 题目格式异常，请重新生成。") from exc
+    if not questions:
+        raise HTTPException(status_code=502, detail="AI 未生成可练习的题目，请重新生成。")
+    questions = save_ai_questions(session, current_user, questions)
+    return AIQuizStructuredResponse(questions=questions)
+
+
+@app.post("/ai/questions/{question_id}/attempt", response_model=AIQuestionAttemptRead)
+def submit_ai_question_attempt(
+    question_id: int,
+    payload: AIQuestionAttemptCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> AIQuestionAttemptRead:
+    return record_ai_question_attempt(session, current_user, question_id, payload.answer)
+
+
+@app.post("/ai/examples", response_model=AISavedExampleRead)
+def save_generated_example(
+    payload: AISavedExampleCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> AISavedExampleRead:
+    return save_ai_example(
+        session,
+        current_user,
+        payload.word_id,
+        payload.sentence,
+        payload.translation,
+        payload.raw_content,
+        payload.source,
+    )
+
+
+@app.get("/words/{word_id}/ai-examples", response_model=list[AISavedExampleRead])
+def word_ai_examples(
+    word_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[AISavedExampleRead]:
+    return list_ai_examples_for_word(session, current_user, word_id)
+
+
+@app.delete("/ai/examples/{example_id}")
+def delete_generated_example(
+    example_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, str]:
+    delete_ai_example(session, current_user, example_id)
+    return {"status": "deleted"}
 
 
 @app.post("/ai/explain-word/stream")
 async def ai_explain_word_stream(
     payload: AIWordPayload,
     current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> StreamingResponse:
     ensure_ai_configured()
+    record_ai_usage(session, current_user, "explain_word")
     return StreamingResponse(
         stream_ai(explain_word_prompt(payload.word)),
         media_type="text/plain; charset=utf-8",
@@ -784,8 +1330,10 @@ async def ai_explain_word_stream(
 async def ai_generate_example_stream(
     payload: AIExamplePayload,
     current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> StreamingResponse:
     ensure_ai_configured()
+    record_ai_usage(session, current_user, "generate_example")
     return StreamingResponse(
         stream_ai(generate_example_prompt(payload.word, payload.level)),
         media_type="text/plain; charset=utf-8",
@@ -796,8 +1344,10 @@ async def ai_generate_example_stream(
 async def ai_analyze_mistakes_stream(
     payload: AIMistakePayload,
     current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> StreamingResponse:
     ensure_ai_configured()
+    record_ai_usage(session, current_user, "analyze_mistakes")
     return StreamingResponse(
         stream_ai(analyze_mistakes_prompt(payload.words)),
         media_type="text/plain; charset=utf-8",
@@ -808,8 +1358,10 @@ async def ai_analyze_mistakes_stream(
 async def ai_generate_quiz_stream(
     payload: AIQuizPayload,
     current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ) -> StreamingResponse:
     ensure_ai_configured()
+    record_ai_usage(session, current_user, "generate_quiz")
     return StreamingResponse(
         stream_ai(generate_quiz_prompt(payload.words, payload.quiz_type)),
         media_type="text/plain; charset=utf-8",

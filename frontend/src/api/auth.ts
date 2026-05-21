@@ -37,3 +37,11 @@ export async function changePassword(token: string, currentPassword: string, new
   );
   return data;
 }
+
+export async function deleteAccount(token: string, password: string) {
+  const { data } = await api.delete<{ status: string }>('/auth/account', {
+    headers: getAuthHeaders(token),
+    data: { password },
+  });
+  return data;
+}

@@ -40,6 +40,19 @@ export function SettingsPage() {
     speech_accent: 'en-US',
     answer_delay_ms: 800,
     word_book_page_size: 30,
+    onboarding_completed: false,
+    learning_goal: null,
+    english_level: null,
+    exam_type: null,
+    target_date: null,
+    daily_minutes: 20,
+    wants_speaking: false,
+    wants_listening: false,
+    wants_ai_tutor: true,
+    reminder_enabled: false,
+    reminder_time: null,
+    membership_tier: 'free',
+    membership_expires_at: null,
   });
   const [stats, setStats] = React.useState<Stats | null>(null);
   const [message, setMessage] = React.useState<{ text: string; tone: 'success' | 'error' | 'info' }>({ text: '', tone: 'success' });

@@ -755,7 +755,9 @@ function WordProgressCard({
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="min-w-0 break-words text-2xl font-semibold" style={{ color: 'var(--ink)' }}>{item.word.text}</h3>
+            <Link className="min-w-0 break-words text-2xl font-semibold hover:underline" style={{ color: 'var(--ink)' }} to={`/words/${item.word.id}`}>
+              {item.word.text}
+            </Link>
             <span className={statusBadgeClass(statusKey)}>{statusText[statusKey]}</span>
             {item.is_leech && (
               <span className="rounded-full bg-[#f4dddd] px-3 py-1 text-xs font-bold text-[#a13d3d] dark:bg-[#2e1b1b] dark:text-[#d47373]">

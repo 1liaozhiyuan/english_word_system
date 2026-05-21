@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.models import ProgressStatus, SpeechAccent, StudyMode
+from app.models import ProgressStatus, SpeechAccent, StudyMode, UserRole
 
 
 class TokenResponse(BaseModel):
@@ -34,11 +34,31 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=6)
 
 
+class AccountDelete(BaseModel):
+    password: str = Field(min_length=1)
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     email: str
+    role: UserRole = UserRole.user
+
+
+class AdminUserRoleUpdate(BaseModel):
+    role: UserRole
+
+
+class AdminOperationLogRead(BaseModel):
+    id: int
+    actor_user_id: int
+    actor_email: str | None = None
+    action: str
+    target_type: str | None = None
+    target_id: str | None = None
+    detail: str | None = None
+    created_at: datetime
 
 
 class UserSettingsRead(BaseModel):
@@ -54,6 +74,19 @@ class UserSettingsRead(BaseModel):
     speech_accent: SpeechAccent = SpeechAccent.us
     answer_delay_ms: int = 800
     word_book_page_size: int = 30
+    onboarding_completed: bool = False
+    learning_goal: str | None = None
+    english_level: str | None = None
+    exam_type: str | None = None
+    target_date: str | None = None
+    daily_minutes: int = 20
+    wants_speaking: bool = False
+    wants_listening: bool = False
+    wants_ai_tutor: bool = True
+    reminder_enabled: bool = False
+    reminder_time: str | None = None
+    membership_tier: str = "free"
+    membership_expires_at: datetime | None = None
 
 
 class UserSettingsUpdate(BaseModel):
@@ -67,6 +100,19 @@ class UserSettingsUpdate(BaseModel):
     speech_accent: SpeechAccent | None = None
     answer_delay_ms: int | None = Field(default=None, ge=300, le=3000)
     word_book_page_size: int | None = Field(default=None, ge=10, le=100)
+    onboarding_completed: bool | None = None
+    learning_goal: str | None = Field(default=None, max_length=80)
+    english_level: str | None = Field(default=None, max_length=80)
+    exam_type: str | None = Field(default=None, max_length=80)
+    target_date: str | None = Field(default=None, max_length=20)
+    daily_minutes: int | None = Field(default=None, ge=5, le=240)
+    wants_speaking: bool | None = None
+    wants_listening: bool | None = None
+    wants_ai_tutor: bool | None = None
+    reminder_enabled: bool | None = None
+    reminder_time: str | None = Field(default=None, max_length=20)
+    membership_tier: str | None = Field(default=None, max_length=40)
+    membership_expires_at: datetime | None = None
 
 
 class WordRead(BaseModel):
@@ -145,6 +191,10 @@ class WordProgressRead(BaseModel):
     next_review_at: datetime | None
     is_leech: bool = False
     is_favorite: bool = False
+
+
+class WordDetailRead(WordProgressRead):
+    word_book_id: int | None = None
 
 
 class WordBookImportResult(BaseModel):
@@ -274,6 +324,165 @@ class DataImportResult(BaseModel):
     settings_imported: bool = False
 
 
+class FeedbackCreate(BaseModel):
+    category: str = Field(default="general", max_length=40)
+    contact: str | None = Field(default=None, max_length=120)
+    content: str = Field(min_length=5, max_length=2000)
+
+
+class FeedbackRead(BaseModel):
+    id: int
+    category: str
+    contact: str | None = None
+    content: str
+    status: str
+    created_at: datetime
+
+
+class ContentReportCreate(BaseModel):
+    source_type: str = Field(default="ai", max_length=40)
+    source_id: str | None = Field(default=None, max_length=80)
+    reason: str = Field(default="inaccurate", max_length=80)
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class ContentReportUpdate(BaseModel):
+    status: str
+    review_note: str | None = Field(default=None, max_length=1000)
+
+
+class ContentReportRead(BaseModel):
+    id: int
+    user_id: int
+    user_email: str | None = None
+    source_type: str
+    source_id: str | None = None
+    reason: str
+    content: str
+    status: str
+    reviewer_user_id: int | None = None
+    review_note: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MembershipRead(BaseModel):
+    tier: str
+    is_member: bool
+    expires_at: datetime | None = None
+    daily_ai_limit: int
+    ai_used_today: int
+    ai_remaining_today: int
+
+
+class MembershipPlanRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    code: str
+    name: str
+    description: str
+    price_cents: int
+    duration_days: int
+    ai_daily_limit: int
+    is_active: bool
+    is_recommended: bool
+    created_at: datetime
+
+
+class MembershipOrderCreate(BaseModel):
+    plan_id: int
+
+
+class MembershipOrderRead(BaseModel):
+    id: int
+    order_no: str
+    user_id: int
+    user_email: str | None = None
+    plan_id: int
+    plan_name: str
+    amount_cents: int
+    status: str
+    paid_at: datetime | None = None
+    created_at: datetime
+
+
+class LearningPlanRead(BaseModel):
+    learning_goal: str | None = None
+    english_level: str | None = None
+    target_date: str | None = None
+    daily_minutes: int
+    daily_new_limit: int
+    daily_review_limit: int
+    total_words: int
+    studied_words: int
+    mastered_words: int
+    remaining_words: int
+    overall_completion_rate: int
+    today_completion_rate: int
+    days_left: int | None = None
+    estimated_finish_days: int | None = None
+    recommended_daily_new_limit: int
+    risk_level: str
+    risk_message: str
+    current_books: list[WordBookProgressRead]
+
+
+class CheckInBadgeRead(BaseModel):
+    code: str
+    title: str
+    description: str
+    earned: bool
+    progress: int
+    target: int
+
+
+class CheckInStatusRead(BaseModel):
+    checked_in_today: bool
+    can_check_in: bool
+    remaining_tasks: int
+    completed_today: int
+    today_progress_rate: int
+    streak_days: int
+    active_days_30: int
+    total_learning_days: int
+    total_reviews: int
+    correct_rate: int
+    mastered_words: int
+    badges: list[CheckInBadgeRead]
+
+
+class LearningReportFocusRead(BaseModel):
+    word_id: int
+    text: str
+    meaning: str
+    wrong_count: int
+    correct_count: int
+    mastery_level: int
+
+
+class LearningReportRead(BaseModel):
+    summary: str
+    total_learning: int
+    mastered: int
+    mastered_rate: int
+    mistakes: int
+    leeches: int
+    total_reviews: int
+    correct_rate: int
+    weekly_reviews: int
+    weekly_correct_rate: int
+    streak_days: int
+    active_days_30: int
+    today_completed: int
+    today_remaining: int
+    strengths: list[str]
+    weaknesses: list[str]
+    recommendations: list[str]
+    focus_words: list[LearningReportFocusRead]
+    activity: list[DailyActivity]
+
+
 class BatchDeleteWords(BaseModel):
     word_ids: list[int] = Field(min_length=1, max_length=500)
 
@@ -307,3 +516,146 @@ class AIQuizPayload(BaseModel):
 
 class AITextResponse(BaseModel):
     content: str
+
+
+class AISavedExampleCreate(BaseModel):
+    word_id: int
+    sentence: str = Field(min_length=1, max_length=1000)
+    translation: str | None = Field(default=None, max_length=1000)
+    raw_content: str | None = Field(default=None, max_length=4000)
+    source: str = Field(default="ai", max_length=30)
+
+
+class AISavedExampleRead(BaseModel):
+    id: int
+    word_id: int
+    sentence: str
+    translation: str | None = None
+    raw_content: str | None = None
+    source: str
+    created_at: datetime
+
+
+class AIQuizQuestionRead(BaseModel):
+    id: str
+    type: str
+    prompt: str
+    options: list[str] = []
+    answer: str
+    explanation: str
+    related_word: str | None = None
+
+
+class AIQuizStructuredResponse(BaseModel):
+    questions: list[AIQuizQuestionRead]
+
+
+class AIQuestionAttemptCreate(BaseModel):
+    answer: str = Field(min_length=1, max_length=1000)
+
+
+class AIQuestionAttemptRead(BaseModel):
+    id: int
+    question_id: int
+    answer: str
+    is_correct: bool
+    created_at: datetime
+
+
+class NotificationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type: str
+    title: str
+    content: str
+    action_url: str | None = None
+    scheduled_at: datetime | None = None
+    read_at: datetime | None = None
+    created_at: datetime
+
+
+class NotificationSummary(BaseModel):
+    unread_count: int
+    items: list[NotificationRead]
+
+
+class ListeningQuestionRead(BaseModel):
+    id: str
+    word_id: int
+    word_book_id: int | None = None
+    audio_text: str
+    phonetic: str | None = None
+    options: list[str]
+
+
+class ListeningAnswerCreate(BaseModel):
+    word_id: int
+    selected_meaning: str = Field(min_length=1, max_length=1000)
+    word_book_id: int | None = None
+
+
+class ListeningAnswerResult(BaseModel):
+    word_id: int
+    is_correct: bool
+    correct_answer: str
+    explanation: str
+    progress: AnswerResult
+
+
+class SpeakingPromptRead(BaseModel):
+    word_id: int
+    word_text: str
+    phonetic: str | None = None
+    meaning: str
+    prompt_text: str
+    translation: str | None = None
+
+
+class SpeakingAttemptCreate(BaseModel):
+    word_id: int
+    prompt_text: str = Field(min_length=1, max_length=1000)
+    transcript: str = Field(min_length=1, max_length=1000)
+
+
+class SpeakingAttemptRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    word_id: int
+    prompt_text: str
+    transcript: str
+    accuracy_score: int
+    feedback: str
+    created_at: datetime
+
+
+class ReadingKnownWordRead(BaseModel):
+    word_id: int
+    text: str
+    meaning: str
+    mastery_level: int
+
+
+class ReadingArticleRead(BaseModel):
+    id: int
+    title: str
+    category: str
+    level: str
+    content: str
+    translation: str | None = None
+    audio_text: str | None = None
+    created_at: datetime
+    completed: bool
+    known_words: list[ReadingKnownWordRead]
+
+
+class ReadingCompleteCreate(BaseModel):
+    reading_seconds: int = Field(default=0, ge=0, le=86400)
+
+
+class ReadingProgressRead(BaseModel):
+    id: int
+    article_id: int
+    completed_at: datetime
+    reading_seconds: int

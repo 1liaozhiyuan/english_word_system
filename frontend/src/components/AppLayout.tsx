@@ -1,15 +1,24 @@
 import {
   ArrowUp,
+  Award,
+  Bell,
+  BarChart3,
   BookOpen,
   ChartNoAxesColumn,
   ClipboardCheck,
+  Crown,
+  FileText,
   Home,
   Library,
+  LifeBuoy,
   LogOut,
   Moon,
   NotebookTabs,
+  PanelsTopLeft,
+  Route,
   RotateCcw,
   Settings,
+  Sparkles,
   Star,
   Sun,
 } from 'lucide-react';
@@ -26,10 +35,23 @@ const links = [
   { to: '/favorites', label: '收藏', icon: Star },
   { to: '/quiz', label: '测试', icon: ClipboardCheck },
   { to: '/stats', label: '统计', icon: ChartNoAxesColumn },
+  { to: '/learning-report', label: '报告', icon: BarChart3 },
+  { to: '/check-in', label: '打卡', icon: Award },
+  { to: '/learning-plan', label: '学习计划', icon: Route },
   { to: '/learning-settings', label: '学习设置', icon: Settings },
+  { to: '/notifications', label: '消息', icon: Bell },
 ];
 
-const mobileLinks = links;
+const extraLinks = [
+  { to: '/onboarding', label: '学习引导', icon: Sparkles },
+  { to: '/membership', label: '会员', icon: Crown },
+  { to: '/support', label: '反馈', icon: LifeBuoy },
+  { to: '/legal', label: '合规', icon: FileText },
+  { to: '/admin', label: '后台', icon: PanelsTopLeft },
+];
+
+const navigationLinks = [...links, ...extraLinks];
+const mobileLinks = navigationLinks;
 
 export function AppLayout() {
   const { user, logout } = useAuth();
@@ -76,7 +98,7 @@ export function AppLayout() {
           <BrandBlock />
 
           <nav className="mt-6 grid gap-2">
-            {links.map((link) => {
+            {navigationLinks.map((link) => {
               const Icon = link.icon;
               return (
                 <NavLink

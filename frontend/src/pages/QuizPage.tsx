@@ -12,16 +12,15 @@ import {
   XCircle,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { generateQuiz } from '../api/ai';
+import { generateStructuredQuiz, recordAIQuestionAttempt } from '../api/ai';
 import { getErrorMessage } from '../api/client';
 import { getFavoritesPaginated } from '../api/favorites';
 import { getMistakes, getNewStudy, getTodayReview, submitAnswer } from '../api/study';
 import { useAuth } from '../auth/AuthContext';
-import { AIResultPanel } from '../components/AIResultPanel';
 import { LoadingState } from '../components/LoadingState';
 import { Message } from '../components/Message';
 import { PageHeader } from '../components/PageHeader';
-import type { StudyItem, StudyMode, Word } from '../types';
+import type { AIQuizQuestion, StudyItem, StudyMode, Word } from '../types';
 
 type QuizType = 'choice' | 'spelling';
 type QuizTypeFilter = 'mixed' | QuizType;
@@ -73,13 +72,14 @@ export function QuizPage() {
   const [message, setMessage] = React.useState<{ text: string; tone: 'success' | 'error' | 'info' }>({ text: '', tone: 'success' });
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [aiQuiz, setAiQuiz] = React.useState('');
   const [isAiLoading, setIsAiLoading] = React.useState(false);
+  const [aiQuestions, setAiQuestions] = React.useState<AIQuizQuestion[]>([]);
+  const [aiAnswers, setAiAnswers] = React.useState<Record<string, string>>({});
+  const [aiSubmitted, setAiSubmitted] = React.useState<Record<string, boolean>>({});
   const [quizMode, setQuizMode] = React.useState<QuizMode>('practice');
   const [quizSource, setQuizSource] = React.useState<QuizSource>('mixed');
   const [quizType, setQuizType] = React.useState<QuizTypeFilter>('mixed');
   const [questionCount, setQuestionCount] = React.useState(12);
-  const aiAbortRef = React.useRef<AbortController | null>(null);
 
   React.useEffect(() => {
     loadQuiz();
@@ -136,28 +136,30 @@ export function QuizPage() {
 
   async function handleGenerateAIQuiz() {
     if (questions.length === 0) return;
-    aiAbortRef.current?.abort();
-    const controller = new AbortController();
-    aiAbortRef.current = controller;
     setIsAiLoading(true);
-    setAiQuiz('');
+    setAiQuestions([]);
+    setAiAnswers({});
+    setAiSubmitted({});
     try {
       const words = questions.map((question) => question.item.word);
-      setAiQuiz(await generateQuiz(token, words, '专项薄弱点测试', setAiQuiz, { signal: controller.signal }));
+      setAiQuestions(await generateStructuredQuiz(token, words, '专项薄弱点测试'));
+      setMessage({ text: 'AI 已生成练习题。请先作答，提交后再查看答案和解析。', tone: 'success' });
     } catch (error) {
-      if ((error as Error).name !== 'AbortError') {
-        setAiQuiz(getErrorMessage(error));
-      }
+      setMessage({ text: getErrorMessage(error), tone: 'error' });
     } finally {
       setIsAiLoading(false);
-      if (aiAbortRef.current === controller) aiAbortRef.current = null;
     }
   }
 
-  function stopAI() {
-    aiAbortRef.current?.abort();
-    aiAbortRef.current = null;
-    setIsAiLoading(false);
+  async function submitAIQuestion(questionId: string) {
+    const answer = aiAnswers[questionId] ?? '';
+    if (!answer.trim()) return;
+    try {
+      await recordAIQuestionAttempt(token, questionId, answer);
+      setAiSubmitted((value) => ({ ...value, [questionId]: true }));
+    } catch (error) {
+      setMessage({ text: getErrorMessage(error), tone: 'error' });
+    }
   }
 
   function goNextQuestion() {
@@ -187,6 +189,19 @@ export function QuizPage() {
   const choiceStats = getTypeStats(records, 'choice');
   const spellingStats = getTypeStats(records, 'spelling');
 
+  React.useEffect(() => {
+    if (!currentRecord?.isCorrect) return;
+    const timer = window.setTimeout(() => {
+      if (currentIndex + 1 >= questions.length) {
+        setCurrentIndex(questions.length);
+      } else {
+        setCurrentIndex((value) => value + 1);
+      }
+      setSpellingInput('');
+    }, 360);
+    return () => window.clearTimeout(timer);
+  }, [currentRecord?.question.id, currentRecord?.isCorrect, currentIndex, questions.length]);
+
   return (
     <>
       <PageHeader
@@ -206,7 +221,14 @@ export function QuizPage() {
         )}
       />
       <Message tone={message.tone}>{message.text}</Message>
-      <AIResultPanel title="AI 专项测试" content={aiQuiz} isLoading={isAiLoading} onStop={stopAI} />
+      <AIPracticePanel
+        answers={aiAnswers}
+        isLoading={isAiLoading}
+        onAnswer={(id, answer) => setAiAnswers((value) => ({ ...value, [id]: answer }))}
+        onSubmit={submitAIQuestion}
+        questions={aiQuestions}
+        submitted={aiSubmitted}
+      />
 
       <section className="surface mb-5 rounded-lg p-4 sm:p-5">
         <div className="grid gap-5 lg:grid-cols-[1fr_auto] lg:items-start">
@@ -543,15 +565,145 @@ function FeedbackPanel({
             {record.isCorrect ? '回答正确' : '回答错误'}
           </div>
           <p className="mt-2 leading-7" style={{ color: 'var(--ink)' }}>
-            {buildFeedbackText(record, quizMode)}
+            {record.isCorrect ? '回答正确，正在进入下一题。' : buildFeedbackText(record, quizMode)}
           </p>
         </div>
-        <button className="button-primary" onClick={onNext} type="button">
-          {isLast ? '查看结果' : '下一题'}
-          <ArrowRight size={16} />
-        </button>
+        {!record.isCorrect && (
+          <button className="button-primary" onClick={onNext} type="button">
+            {isLast ? '查看结果' : '下一题'}
+            <ArrowRight size={16} />
+          </button>
+        )}
       </div>
     </div>
+  );
+}
+
+function AIPracticePanel({
+  answers,
+  isLoading,
+  onAnswer,
+  onSubmit,
+  questions,
+  submitted,
+}: {
+  answers: Record<string, string>;
+  isLoading: boolean;
+  onAnswer: (id: string, answer: string) => void;
+  onSubmit: (id: string) => void;
+  questions: AIQuizQuestion[];
+  submitted: Record<string, boolean>;
+}) {
+  const [currentIndex, setCurrentIndex] = React.useState(0);
+
+  React.useEffect(() => {
+    setCurrentIndex(0);
+  }, [questions]);
+
+  if (isLoading) {
+    return (
+      <section className="surface mb-5 rounded-lg p-5 text-sm" style={{ color: 'var(--muted)' }}>
+        AI 正在生成可作答题目...
+      </section>
+    );
+  }
+  if (!questions.length) return null;
+  const question = questions[Math.min(currentIndex, questions.length - 1)];
+  const value = answers[question.id] ?? '';
+  const isSubmitted = Boolean(submitted[question.id]);
+  const isCorrect = normalizeAnswer(value) === normalizeAnswer(question.answer);
+  const isLast = currentIndex + 1 >= questions.length;
+
+  React.useEffect(() => {
+    if (!isSubmitted || !isCorrect || isLast) return;
+    const timer = window.setTimeout(() => {
+      setCurrentIndex((value) => Math.min(value + 1, questions.length - 1));
+    }, 360);
+    return () => window.clearTimeout(timer);
+  }, [isSubmitted, isCorrect, isLast, question.id, questions.length]);
+
+  return (
+    <section className="surface mb-5 rounded-lg p-5">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--green)' }}>AI Practice</p>
+          <h3 className="mt-1 text-2xl font-semibold">AI 生成练习</h3>
+        </div>
+        <p className="max-w-xl text-sm leading-6" style={{ color: 'var(--muted)' }}>
+          答案和解析会在提交后显示，避免提前暴露影响练习效果。
+        </p>
+      </div>
+      <div className="grid gap-4">
+            <article className="rounded-lg border p-4" key={question.id} style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="chip" style={{ background: 'var(--green-soft)', color: 'var(--green)' }}>
+                  第 {currentIndex + 1} / {questions.length} 题 · {question.type === 'choice' ? '选择' : question.type === 'blank' ? '填空' : '拼写'}
+                </span>
+                {question.related_word && <span className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>{question.related_word}</span>}
+              </div>
+              <p className="mt-3 text-lg font-semibold leading-8">{question.prompt}</p>
+              {question.options.length > 0 ? (
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {question.options.map((option) => (
+                    <button
+                      className={value === option ? 'answer answer-good justify-start px-4 text-left' : 'answer justify-start px-4 text-left'}
+                      disabled={isSubmitted}
+                      key={option}
+                      onClick={() => onAnswer(question.id, option)}
+                      type="button"
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <input
+                  className="input mt-4"
+                  disabled={isSubmitted}
+                  onChange={(event) => onAnswer(question.id, event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && value.trim()) onSubmit(question.id);
+                  }}
+                  placeholder="输入你的答案..."
+                  value={value}
+                />
+              )}
+              <button className="button-primary mt-4" disabled={isSubmitted || !value.trim()} onClick={() => onSubmit(question.id)} type="button">
+                提交本题
+              </button>
+              {isSubmitted && (
+                <div
+                  className="mt-4 rounded-lg border p-4 text-sm leading-7"
+                  style={{
+                    borderColor: isCorrect ? 'var(--green)' : 'var(--red)',
+                    background: isCorrect ? 'var(--green-soft)' : 'var(--red-soft)',
+                    color: 'var(--ink)',
+                  }}
+                >
+                  <div className="font-bold" style={{ color: isCorrect ? 'var(--green)' : 'var(--red)' }}>
+                    {isCorrect ? '回答正确' : '回答错误'}
+                  </div>
+                  {isCorrect ? (
+                    <div className="mt-1">正在进入下一题。</div>
+                  ) : (
+                    <>
+                      <div className="mt-1">正确答案：{question.answer}</div>
+                      {question.explanation && <div className="mt-1">解析：{question.explanation}</div>}
+                      <button
+                        className="button-primary mt-3"
+                        disabled={isLast}
+                        onClick={() => setCurrentIndex((value) => Math.min(value + 1, questions.length - 1))}
+                        type="button"
+                      >
+                        {isLast ? '已完成全部 AI 练习' : '下一题'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </article>
+      </div>
+    </section>
   );
 }
 
@@ -605,6 +757,10 @@ function TypeReport({
       </div>
     </div>
   );
+}
+
+function normalizeAnswer(value: string) {
+  return value.trim().toLowerCase().replace(/^[a-d][.、\s]+/i, '');
 }
 
 function buildFeedbackText(record: QuizRecord, quizMode: QuizMode) {

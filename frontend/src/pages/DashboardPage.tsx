@@ -2,28 +2,45 @@ import React from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  Award,
+  Bell,
   BookOpen,
   CalendarCheck,
-  CheckCircle2,
+  ChartNoAxesColumn,
   ClipboardCheck,
+  Crown,
+  FileText,
   Flame,
+  Headphones,
   Library,
+  LifeBuoy,
+  Mic,
+  NotebookTabs,
+  PanelsTopLeft,
+  Route,
   RotateCcw,
+  Settings,
+  Sparkles,
+  Star,
   Target,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getErrorMessage } from '../api/client';
+import { getSettings } from '../api/settings';
 import { getStatsOverview } from '../api/stats';
+import { getWordBookProgress } from '../api/wordBooks';
 import { useAuth } from '../auth/AuthContext';
 import { LoadingState } from '../components/LoadingState';
 import { Message } from '../components/Message';
 import { PageHeader } from '../components/PageHeader';
 import { StatCard } from '../components/StatCard';
-import type { Stats } from '../types';
+import type { Stats, UserSettings, WordBookProgress } from '../types';
 
 export function DashboardPage() {
   const { token, user } = useAuth();
   const [stats, setStats] = React.useState<Stats | null>(null);
+  const [settings, setSettings] = React.useState<UserSettings | null>(null);
+  const [wordBooks, setWordBooks] = React.useState<WordBookProgress[]>([]);
   const [message, setMessage] = React.useState('');
   const [isLoading, setIsLoading] = React.useState(true);
 
@@ -31,9 +48,18 @@ export function DashboardPage() {
     setIsLoading(true);
     setMessage('');
     try {
-      setStats(await getStatsOverview(token));
+      const [nextStats, nextSettings, nextWordBooks] = await Promise.all([
+        getStatsOverview(token),
+        getSettings(token),
+        getWordBookProgress(token),
+      ]);
+      setStats(nextStats);
+      setSettings(nextSettings);
+      setWordBooks(nextWordBooks);
     } catch (error) {
       setStats(null);
+      setSettings(null);
+      setWordBooks([]);
       setMessage(getErrorMessage(error));
     } finally {
       setIsLoading(false);
@@ -46,12 +72,15 @@ export function DashboardPage() {
 
   const plan = stats ? getTodayPlan(stats) : null;
   const totalToday = (stats?.due_new ?? 0) + (stats?.due_review ?? 0);
+  const currentBook = getCurrentWordBook(wordBooks);
+  const aiSuggestion = stats ? getAISuggestion(stats, settings, currentBook) : null;
+  const todayCompletion = stats ? getTodayCompletion(stats) : 0;
 
   return (
     <>
       <PageHeader
         title="今日学习中心"
-        description={`欢迎回来，${user?.email ?? 'learner'}。这里会根据你的学习进度给出今天最合适的安排。`}
+        description={`欢迎回来，${user?.email ?? 'learner'}。这里汇总今日任务、学习进度和常用功能。`}
       />
       <Message tone="error">{message}</Message>
 
@@ -70,7 +99,7 @@ export function DashboardPage() {
 
       {!isLoading && stats && plan && (
         <>
-          <section className="surface mb-5 rounded-lg p-6">
+          <section className="dashboard-hero mb-5 rounded-lg p-6">
             <div className="grid gap-6 lg:grid-cols-[1fr_320px] lg:items-start">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -120,8 +149,94 @@ export function DashboardPage() {
           <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="今日待学新词" value={stats.due_new} suffix={`/ ${stats.daily_new_limit}`} />
             <StatCard label="今日待复习" value={stats.due_review} suffix={`/ ${stats.daily_review_limit}`} />
-            <StatCard label="错词需关注" value={stats.mistakes} />
+            <StatCard label="错题需关注" value={stats.mistakes} />
             <StatCard label="今日已完成" value={stats.completed_today} />
+          </section>
+
+          <section className="mb-5 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+            <div className="surface rounded-lg p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--green)' }}>
+                    Study Plan
+                  </p>
+                  <h3 className="mt-1 text-2xl font-semibold tracking-normal">当前学习计划</h3>
+                </div>
+                <Link className="button-secondary" to="/onboarding">
+                  调整目标
+                </Link>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <PlanMetric label="学习目标" value={settings?.learning_goal ?? '未设置'} />
+                <PlanMetric label="当前水平" value={settings?.english_level ?? '待评估'} />
+                <PlanMetric label="每日时间" value={`${settings?.daily_minutes ?? 20} 分钟`} />
+              </div>
+              <div className="mt-4 rounded-lg border p-4" style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <span className="text-sm font-semibold">今日任务进度</span>
+                  <span className="text-sm font-bold" style={{ color: 'var(--green)' }}>{todayCompletion}%</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full" style={{ background: 'var(--panel)' }}>
+                  <div className="h-full rounded-full" style={{ width: `${todayCompletion}%`, background: 'var(--green)' }} />
+                </div>
+              </div>
+            </div>
+
+            <div className="surface rounded-lg p-5">
+              <div className="mb-4 flex items-center gap-2">
+                <Sparkles size={21} style={{ color: 'var(--green)' }} />
+                <h3 className="text-xl font-semibold">AI 学习建议</h3>
+              </div>
+              <p className="text-sm leading-7" style={{ color: 'var(--muted)' }}>
+                {aiSuggestion}
+              </p>
+              <div className="mt-4 grid gap-3">
+                <PlanMetric label="当前词库" value={currentBook?.title ?? '尚未选择词库'} />
+                <PlanMetric label="词库完成率" value={currentBook ? `${currentBook.completion_rate}%` : '0%'} />
+              </div>
+            </div>
+          </section>
+
+          <section className="surface mb-5 rounded-lg p-5">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--green)' }}>
+                  Learning Console
+                </p>
+                <h3 className="mt-1 text-2xl font-semibold tracking-normal">常用学习功能</h3>
+              </div>
+              <p className="max-w-xl text-sm leading-6" style={{ color: 'var(--muted)' }}>
+                首页只保留这一组功能入口，避免重复导航。学习、复盘、设置和服务都从这里进入。
+              </p>
+            </div>
+            <div className="feature-group-grid">
+              <FeatureGroup title="学习流程">
+                <FeatureLink icon={<Library size={18} />} label="词库广场" note="选择官方词库或导入自定义词库" to="/word-books" />
+                <FeatureLink icon={<BookOpen size={18} />} label="新词学习" note={`${stats.due_new} 个今日新词`} to="/study" />
+                <FeatureLink icon={<RotateCcw size={18} />} label="今日复习" note={`${stats.due_review} 个到期复习`} to="/review" />
+                <FeatureLink icon={<ClipboardCheck size={18} />} label="专项测试" note="选择题、拼写题和混合测试" to="/quiz" />
+                <FeatureLink icon={<Headphones size={18} />} label="听力训练" note="听音辨义、听写和复习记录" to="/listening" />
+                <FeatureLink icon={<Mic size={18} />} label="口语跟读" note="例句跟读、评分和历史记录" to="/speaking" />
+                <FeatureLink icon={<BookOpen size={18} />} label="阅读训练" note="分级文章、生词和阅读记录" to="/reading" />
+              </FeatureGroup>
+              <FeatureGroup title="复盘与数据">
+                <FeatureLink icon={<NotebookTabs size={18} />} label="错题本" note={`${stats.mistakes} 个需要关注`} to="/mistakes" />
+                <FeatureLink icon={<Star size={18} />} label="收藏单词" note="查看重点词和个人词单" to="/favorites" />
+                <FeatureLink icon={<ChartNoAxesColumn size={18} />} label="学习统计" note="正确率、连续学习和热力图" to="/stats" />
+                <FeatureLink icon={<Award size={18} />} label="打卡激励" note="连续学习、活跃天数和成就徽章" to="/check-in" />
+                <FeatureLink icon={<Flame size={18} />} label="学习报告" note="查看阶段表现和薄弱点" to="/learning-report" />
+              </FeatureGroup>
+              <FeatureGroup title="设置与服务">
+                <FeatureLink icon={<Route size={18} />} label="学习计划" note="查看完成率、目标日期和风险提醒" to="/learning-plan" />
+                <FeatureLink icon={<Settings size={18} />} label="学习设置" note="每日任务、发音、默认模式" to="/learning-settings" />
+                <FeatureLink icon={<Bell size={18} />} label="消息提醒" note="复习到期、错题和 AI 额度提醒" to="/notifications" />
+                <FeatureLink icon={<Sparkles size={18} />} label="目标引导" note="重新生成个性化计划" to="/onboarding" />
+                <FeatureLink icon={<Crown size={18} />} label="会员权益" note="AI 额度、订阅和套餐说明" to="/membership" />
+                <FeatureLink icon={<LifeBuoy size={18} />} label="反馈客服" note="提交问题和 AI 内容反馈" to="/support" />
+                <FeatureLink icon={<FileText size={18} />} label="协议隐私" note="用户协议、隐私政策和注销说明" to="/legal" />
+                <FeatureLink icon={<PanelsTopLeft size={18} />} label="运营后台" note="用户、词库、订单和内容管理入口" to="/admin" />
+              </FeatureGroup>
+            </div>
           </section>
 
           <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -145,38 +260,6 @@ export function DashboardPage() {
               </Link>
             </div>
             <ActivityHeatmap activity={stats.monthly_activity} />
-          </section>
-
-          <section className="grid gap-4 lg:grid-cols-3">
-            <ActionPanel
-              icon={<BookOpen size={27} />}
-              tone="green"
-              label="新词学习"
-              title={`${stats.due_new} 个今日新词`}
-              description={`今天的新词任务上限是 ${stats.daily_new_limit} 个。当前词书计划中还有 ${stats.available_new} 个未学新词。`}
-              action="学习新词"
-              to="/study"
-              disabled={stats.due_new === 0}
-            />
-            <ActionPanel
-              icon={<RotateCcw size={27} />}
-              tone="amber"
-              label="到期复习"
-              title={`${stats.due_review} 个今日复习`}
-              description={`今天的复习任务上限是 ${stats.daily_review_limit} 个。当前到期复习共有 ${stats.available_review} 个。`}
-              action="开始复习"
-              to="/review"
-              disabled={stats.due_review === 0}
-            />
-            <ActionPanel
-              icon={<ClipboardCheck size={27} />}
-              tone="green"
-              label="专项测试"
-              title="检测掌握情况"
-              description="用选择题和拼写题检查真实掌握情况，测试错误会进入错词和复习系统。"
-              action="开始测试"
-              to="/quiz"
-            />
           </section>
 
           {totalToday === 0 && (
@@ -207,6 +290,50 @@ export function DashboardPage() {
   );
 }
 
+  function FeatureGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="feature-group">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h4 className="text-base font-semibold" style={{ color: 'var(--ink)' }}>{title}</h4>
+        <span className="h-px flex-1" style={{ background: 'var(--line)' }} />
+      </div>
+      <div className="feature-group-body">{children}</div>
+    </div>
+  );
+}
+
+function PlanMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+      <div className="text-xs font-bold uppercase tracking-[0.12em]" style={{ color: 'var(--muted)' }}>{label}</div>
+      <div className="mt-1 truncate text-base font-semibold" style={{ color: 'var(--ink)' }}>{value}</div>
+    </div>
+  );
+}
+
+function FeatureLink({
+  icon,
+  label,
+  note,
+  to,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  note: string;
+  to: string;
+}) {
+  return (
+    <Link className="feature-link" to={to}>
+      <span className="feature-link-icon">{icon}</span>
+      <span className="min-w-0">
+        <span className="block font-semibold" style={{ color: 'var(--ink)' }}>{label}</span>
+        <span className="mt-0.5 block truncate text-xs" style={{ color: 'var(--muted)' }}>{note}</span>
+      </span>
+      <ArrowRight className="ml-auto shrink-0 opacity-45" size={15} />
+    </Link>
+  );
+}
+
 function getTodayPlan(stats: Stats) {
   if (stats.due_review > 0) {
     return {
@@ -215,10 +342,10 @@ function getTodayPlan(stats: Stats) {
       description: `当前共有 ${stats.available_review} 个到期复习，今天按设置先安排 ${stats.due_review} 个。`,
       coachNote: stats.due_new > 0
         ? `建议先完成复习，再学习 ${stats.due_new} 个新词。`
-        : '今天没有新词压力，把到期复习清理掉就很漂亮。',
+        : '今天没有新词压力，把到期复习清理掉就很好。',
       primaryAction: '开始复习',
       primaryTo: '/review',
-      secondaryAction: stats.due_new > 0 ? '稍后学新词' : '查看错词',
+      secondaryAction: stats.due_new > 0 ? '稍后学新词' : '查看错题',
       secondaryTo: stats.due_new > 0 ? '/study' : '/mistakes',
       toneColor: 'var(--amber)',
       icon: <RotateCcw size={18} />,
@@ -275,6 +402,49 @@ function getTodayPlan(stats: Stats) {
   };
 }
 
+function getCurrentWordBook(books: WordBookProgress[]) {
+  const activeBooks = books.filter((book) => book.added_count > 0);
+  if (!activeBooks.length) return null;
+  return [...activeBooks].sort((a, b) => {
+    if (a.completion_rate !== b.completion_rate) {
+      return a.completion_rate - b.completion_rate;
+    }
+    return b.added_count - a.added_count;
+  })[0];
+}
+
+function getTodayCompletion(stats: Stats) {
+  const planned = stats.daily_new_limit + stats.daily_review_limit;
+  if (!planned) return 0;
+  return Math.max(0, Math.min(100, Math.round((stats.completed_today / planned) * 100)));
+}
+
+function getAISuggestion(
+  stats: Stats,
+  settings: UserSettings | null,
+  currentBook: WordBookProgress | null,
+) {
+  if (!currentBook) {
+    return '你还没有选择词库。建议先进入词库广场选择一个和当前目标匹配的词库，系统会自动生成新词和复习任务。';
+  }
+  if (!settings?.onboarding_completed) {
+    return '建议先完成目标引导，系统会根据你的考试目标、水平和每日时间重新规划学习节奏。';
+  }
+  if (stats.due_review > stats.due_new) {
+    return `今天复习压力高于新词任务，优先完成 ${stats.due_review} 个到期复习，再考虑学习新词。`;
+  }
+  if (stats.mistakes >= 10) {
+    return `错题数量已经达到 ${stats.mistakes} 个，建议安排一次错题复盘，先稳定易错词再扩展新词。`;
+  }
+  if (stats.weekly_reviews > 0 && stats.weekly_correct_rate < 65) {
+    return '本周正确率偏低，建议把每日新词量调小一点，并多使用拼写或听音模式巩固。';
+  }
+  if (currentBook.completion_rate >= 80) {
+    return `当前词库《${currentBook.title}》接近完成，可以开始准备阶段测试或选择下一本词库。`;
+  }
+  return `当前节奏比较稳定，继续推进《${currentBook.title}》。完成今日任务后，可以用专项测试检查真实掌握情况。`;
+}
+
 function ActivityHeatmap({ activity }: { activity: Stats['monthly_activity'] }) {
   const maxReviews = Math.max(1, ...activity.map((item) => item.reviews));
   return (
@@ -311,54 +481,6 @@ function MiniMetric({ label, value }: { label: string; value: number }) {
     <div className="rounded-lg border border-[#ddd7c7] bg-[#fffdf8] px-2 py-3 dark:border-[#3d3a32] dark:bg-[#25231e]">
       <div className="text-xl font-semibold" style={{ color: 'var(--ink)' }}>{value}</div>
       <div className="mt-1 text-xs font-bold" style={{ color: 'var(--muted)' }}>{label}</div>
-    </div>
-  );
-}
-
-function ActionPanel({
-  icon,
-  tone,
-  label,
-  title,
-  description,
-  action,
-  to,
-  disabled,
-}: {
-  icon: React.ReactNode;
-  tone: 'green' | 'amber';
-  label: string;
-  title: string;
-  description: string;
-  action: string;
-  to: string;
-  disabled?: boolean;
-}) {
-  const toneClass = tone === 'green'
-    ? 'bg-[#e6efdf] dark:bg-[#1e2f1c] text-[#355e3b] dark:text-[#7fb87a]'
-    : 'bg-[#f5ead2] dark:bg-[#2e2516] text-[#9b6b2f] dark:text-[#d4a346]';
-
-  return (
-    <div className={`surface rounded-lg p-6 ${disabled ? 'opacity-75' : ''}`}>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-bold" style={{ color: tone === 'green' ? 'var(--green)' : 'var(--amber)' }}>
-            {label}
-          </p>
-          <h3 className="mt-2 text-3xl font-semibold tracking-normal" style={{ color: 'var(--ink)' }}>{title}</h3>
-          <p className="mt-3 max-w-xl leading-7" style={{ color: 'var(--muted)' }}>{description}</p>
-        </div>
-        <div className={`hidden h-14 w-14 items-center justify-center rounded-lg md:flex ${toneClass}`}>
-          {icon}
-        </div>
-      </div>
-      <Link
-        className={disabled ? 'button-secondary mt-6 pointer-events-none' : tone === 'green' ? 'button-primary mt-6' : 'button-secondary mt-6'}
-        to={to}
-      >
-        {disabled ? '暂无任务' : action}
-        {tone === 'green' ? <ArrowRight size={17} /> : <CheckCircle2 size={17} />}
-      </Link>
     </div>
   );
 }

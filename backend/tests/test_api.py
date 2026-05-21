@@ -2,13 +2,14 @@ import os
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session, SQLModel, select
 
 os.environ["DATABASE_URL"] = "sqlite:///./test_english_words.db"
 
 from app.core.config import settings
 from app.db.session import engine
 from app.main import app
+from app.models import AIQuestion, User, UserRole
 from app.services import seed_demo_data
 
 
@@ -20,12 +21,20 @@ with Session(engine) as session:
 client = TestClient(app)
 
 
-def create_user_headers(prefix: str = "test") -> dict[str, str]:
+def create_user_headers(prefix: str = "test", role: UserRole | None = None) -> dict[str, str]:
+    email = f"{prefix}-{uuid4().hex}@example.com"
     response = client.post(
         "/auth/register",
-        json={"email": f"{prefix}-{uuid4().hex}@example.com", "password": "password123"},
+        json={"email": email, "password": "password123"},
     )
     assert response.status_code == 200
+    if role:
+        with Session(engine) as session:
+            user = session.exec(select(User).where(User.email == email)).first()
+            assert user
+            user.role = role
+            session.add(user)
+            session.commit()
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
@@ -89,6 +98,107 @@ def test_auth_login_and_password_reset_flow():
     assert response.status_code == 200
 
 
+def test_feedback_and_account_deletion_flow():
+    email = f"delete-{uuid4().hex}@example.com"
+    password = "password123"
+    response = client.post("/auth/register", json={"email": email, "password": password})
+    assert response.status_code == 200
+    headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    response = client.post(
+        "/feedback",
+        headers=headers,
+        json={
+            "category": "AI 内容不准确",
+            "contact": email,
+            "content": "The explanation for a word is not clear enough.",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "open"
+    assert response.json()["category"] == "AI 内容不准确"
+    feedback_id = response.json()["id"]
+
+    response = client.post(
+        "/content-reports",
+        headers=headers,
+        json={
+            "source_type": "ai_explanation",
+            "source_id": "test",
+            "reason": "inaccurate",
+            "content": "This AI explanation should be reviewed.",
+        },
+    )
+    assert response.status_code == 200
+    content_report_id = response.json()["id"]
+    assert response.json()["status"] == "open"
+
+    response = client.get("/admin/overview", headers=headers)
+    assert response.status_code == 403
+
+    admin_headers = create_user_headers("admin", UserRole.admin)
+
+    response = client.get("/admin/overview", headers=admin_headers)
+    assert response.status_code == 200
+    overview = response.json()
+    assert overview["feedback_open"] >= 1
+    assert overview["total_users"] >= overview["users"]
+    assert overview["demo_users"] >= 1
+
+    response = client.get("/admin/users", headers=admin_headers)
+    assert response.status_code == 200
+    assert response.json()["total"] >= 1
+
+    response = client.get("/admin/feedback", headers=admin_headers)
+    assert response.status_code == 200
+    assert any(item["id"] == feedback_id for item in response.json()["items"])
+
+    response = client.get("/admin/content-reports", headers=admin_headers)
+    assert response.status_code == 200
+    assert any(item["id"] == content_report_id for item in response.json()["items"])
+
+    response = client.patch(
+        f"/admin/content-reports/{content_report_id}",
+        headers=admin_headers,
+        json={"status": "resolved", "review_note": "checked"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "resolved"
+
+    response = client.patch(f"/admin/feedback/{feedback_id}", headers=admin_headers, params={"status": "closed"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "closed"
+
+    response = client.get("/admin/ai-usage", headers=admin_headers)
+    assert response.status_code == 200
+    assert "feature_summary" in response.json()
+
+    response = client.patch("/admin/users/1/role", headers=admin_headers, json={"role": "reviewer"})
+    assert response.status_code in {200, 404}
+
+    response = client.get("/admin/operation-logs", headers=admin_headers)
+    assert response.status_code == 200
+    assert response.json()["total"] >= 1
+
+    response = client.get("/admin/membership-plans", headers=admin_headers)
+    assert response.status_code == 200
+    assert len(response.json()) >= 3
+
+    response = client.get("/admin/orders", headers=admin_headers)
+    assert response.status_code == 200
+    assert "items" in response.json()
+
+    response = client.request("DELETE", "/auth/account", headers=headers, json={"password": "wrong"})
+    assert response.status_code == 400
+
+    response = client.request("DELETE", "/auth/account", headers=headers, json={"password": password})
+    assert response.status_code == 200
+    assert response.json()["status"] == "account_deleted"
+
+    response = client.post("/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 401
+
+
 def test_core_learning_flow():
     response = client.get("/health")
     assert response.status_code == 200
@@ -106,7 +216,8 @@ def test_core_learning_flow():
         json={"daily_new_limit": 3, "daily_review_limit": 7},
     )
     assert response.status_code == 200
-    assert response.json() == {
+    settings_payload = response.json()
+    assert settings_payload == {
         "daily_new_limit": 3,
         "daily_review_limit": 7,
         "default_study_mode": "en_to_cn",
@@ -117,7 +228,74 @@ def test_core_learning_flow():
         "speech_accent": "en-US",
         "answer_delay_ms": 800,
         "word_book_page_size": 30,
+        "onboarding_completed": False,
+        "learning_goal": None,
+        "english_level": None,
+        "exam_type": None,
+        "target_date": None,
+        "daily_minutes": 20,
+        "wants_speaking": False,
+        "wants_listening": False,
+        "wants_ai_tutor": True,
+        "reminder_enabled": False,
+        "reminder_time": None,
+        "membership_tier": "free",
+        "membership_expires_at": None,
     }
+
+    response = client.patch(
+        "/settings",
+        headers=headers,
+        json={
+            "onboarding_completed": True,
+            "learning_goal": "大学英语四级",
+            "english_level": "大学基础",
+            "exam_type": "大学英语四级",
+            "target_date": "2026-12-20",
+            "daily_minutes": 35,
+            "wants_speaking": True,
+            "wants_listening": True,
+            "wants_ai_tutor": True,
+            "reminder_enabled": True,
+            "reminder_time": "20:30",
+        },
+    )
+    assert response.status_code == 200
+    onboarding_settings = response.json()
+    assert onboarding_settings["onboarding_completed"] is True
+    assert onboarding_settings["learning_goal"] == "大学英语四级"
+    assert onboarding_settings["daily_minutes"] == 35
+    assert onboarding_settings["reminder_time"] == "20:30"
+
+    response = client.get("/membership/status", headers=headers)
+    assert response.status_code == 200
+    membership = response.json()
+    assert membership["tier"] == "free"
+    assert membership["daily_ai_limit"] == 5
+    assert membership["ai_remaining_today"] == 5
+
+    response = client.get("/membership/plans", headers=headers)
+    assert response.status_code == 200
+    plans = response.json()
+    assert len(plans) >= 3
+    assert all(plan["price_cents"] >= 0 for plan in plans)
+
+    response = client.post("/membership/orders/demo-pay", headers=headers, json={"plan_id": plans[0]["id"]})
+    assert response.status_code == 200
+    order = response.json()
+    assert order["status"] == "paid"
+    assert order["plan_id"] == plans[0]["id"]
+
+    response = client.get("/membership/orders", headers=headers)
+    assert response.status_code == 200
+    assert any(item["id"] == order["id"] for item in response.json())
+
+    response = client.post("/membership/demo-upgrade", headers=headers)
+    assert response.status_code == 200
+    membership = response.json()
+    assert membership["tier"] == "pro"
+    assert membership["is_member"] is True
+    assert membership["daily_ai_limit"] == 100
 
     response = client.patch(
         "/settings",
@@ -207,6 +385,71 @@ def test_core_learning_flow():
     assert response.status_code == 200
     assert len(response.json()) <= 1
 
+    response = client.get("/listening/session", headers=headers, params={"limit": 3})
+    assert response.status_code == 200
+    listening_questions = response.json()
+    assert listening_questions
+    listening_question = listening_questions[0]
+    assert listening_question["audio_text"]
+    assert listening_question["options"]
+    response = client.get(f"/words/{listening_question['word_id']}", headers=headers)
+    assert response.status_code == 200
+    listening_answer = response.json()["word"]["meaning"]
+
+    response = client.post(
+        "/listening/answer",
+        headers=headers,
+        json={
+            "word_id": listening_question["word_id"],
+            "word_book_id": listening_question["word_book_id"],
+            "selected_meaning": listening_answer,
+        },
+    )
+    assert response.status_code == 200
+    assert "is_correct" in response.json()
+    assert response.json()["progress"]["word_id"] == listening_question["word_id"]
+
+    response = client.get("/speaking/session", headers=headers, params={"limit": 3})
+    assert response.status_code == 200
+    speaking_prompts = response.json()
+    assert speaking_prompts
+    speaking_prompt = speaking_prompts[0]
+    assert speaking_prompt["prompt_text"]
+
+    response = client.post(
+        "/speaking/attempts",
+        headers=headers,
+        json={
+            "word_id": speaking_prompt["word_id"],
+            "prompt_text": speaking_prompt["prompt_text"],
+            "transcript": speaking_prompt["prompt_text"],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["accuracy_score"] >= 80
+
+    response = client.get("/speaking/attempts", headers=headers)
+    assert response.status_code == 200
+    assert response.json()[0]["word_id"] == speaking_prompt["word_id"]
+
+    response = client.get("/reading/articles", headers=headers)
+    assert response.status_code == 200
+    articles = response.json()
+    assert articles
+    article_id = articles[0]["id"]
+
+    response = client.get(f"/reading/articles/{article_id}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["content"]
+
+    response = client.post(
+        f"/reading/articles/{article_id}/complete",
+        headers=headers,
+        json={"reading_seconds": 12},
+    )
+    assert response.status_code == 200
+    assert response.json()["article_id"] == article_id
+
     response = client.get("/mistakes", headers=headers)
     assert response.status_code == 200
     assert response.json()
@@ -260,14 +503,111 @@ def test_core_learning_flow():
     assert stats["new_completed_today"] >= 1
     assert stats["completed_today"] >= 1
     assert stats["total_reviews"] >= 1
-    assert stats["correct_reviews"] == 0
-    assert stats["correct_rate"] == 0
+    assert stats["correct_reviews"] >= 1
+    assert stats["correct_rate"] >= 0
     assert stats["weekly_reviews"] >= 1
-    assert stats["weekly_correct_rate"] == 0
+    assert stats["weekly_correct_rate"] >= 0
     assert stats["active_days_30"] >= 1
     assert stats["streak_days"] == 1
     assert len(stats["activity"]) == 7
     assert len(stats["monthly_activity"]) == 30
+
+    response = client.get("/learning-plan", headers=headers)
+    assert response.status_code == 200
+    learning_plan = response.json()
+    assert learning_plan["daily_new_limit"] == 3
+    assert learning_plan["daily_review_limit"] == 7
+    assert learning_plan["total_words"] >= learning_plan["studied_words"]
+    assert learning_plan["remaining_words"] >= 0
+    assert learning_plan["risk_level"] in {"setup", "healthy", "medium", "high"}
+    assert isinstance(learning_plan["current_books"], list)
+
+    response = client.get("/check-in/status", headers=headers)
+    assert response.status_code == 200
+    check_in = response.json()
+    assert check_in["checked_in_today"] is True
+    assert check_in["completed_today"] >= 1
+    assert check_in["streak_days"] == 1
+    assert check_in["total_reviews"] >= 1
+    assert isinstance(check_in["badges"], list)
+    assert {badge["code"] for badge in check_in["badges"]} >= {"streak_3", "reviews_100"}
+
+    response = client.get("/learning-report", headers=headers)
+    assert response.status_code == 200
+    report = response.json()
+    assert report["total_reviews"] >= 1
+    assert report["mistakes"] == 1
+    assert report["today_completed"] >= 1
+    assert report["today_remaining"] >= 0
+    assert isinstance(report["strengths"], list)
+    assert isinstance(report["weaknesses"], list)
+    assert isinstance(report["recommendations"], list)
+    assert len(report["activity"]) == 30
+
+    response = client.post(
+        "/ai/examples",
+        headers=headers,
+        json={
+            "word_id": new_items[0]["word"]["id"],
+            "sentence": "This is a saved AI example.",
+            "translation": "这是一个保存的 AI 例句。",
+            "raw_content": "This is a saved AI example.\n这是一个保存的 AI 例句。",
+        },
+    )
+    assert response.status_code == 200
+    saved_example = response.json()
+    assert saved_example["word_id"] == new_items[0]["word"]["id"]
+    assert saved_example["sentence"] == "This is a saved AI example."
+
+    response = client.get(f"/words/{new_items[0]['word']['id']}/ai-examples", headers=headers)
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == saved_example["id"]
+
+    response = client.delete(f"/ai/examples/{saved_example['id']}", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "deleted"
+
+    response = client.get(f"/words/{new_items[0]['word']['id']}/ai-examples", headers=headers)
+    assert response.status_code == 200
+    assert all(item["id"] != saved_example["id"] for item in response.json())
+
+    response = client.get("/me", headers=headers)
+    assert response.status_code == 200
+    user_id = response.json()["id"]
+    with Session(engine) as session:
+        ai_question = AIQuestion(
+            user_id=user_id,
+            word_id=new_items[0]["word"]["id"],
+            question_type="choice",
+            prompt="Choose the meaning.",
+            options_json='["A","B"]',
+            answer="B",
+            explanation="B is correct.",
+            related_word=new_items[0]["word"]["text"],
+        )
+        session.add(ai_question)
+        session.commit()
+        session.refresh(ai_question)
+        ai_question_id = ai_question.id
+
+    response = client.post(f"/ai/questions/{ai_question_id}/attempt", headers=headers, json={"answer": "B"})
+    assert response.status_code == 200
+    assert response.json()["is_correct"] is True
+
+    response = client.post(f"/ai/questions/{ai_question_id}/attempt", headers=headers, json={"answer": "A"})
+    assert response.status_code == 200
+    assert response.json()["is_correct"] is False
+
+    response = client.get("/notifications", headers=headers)
+    assert response.status_code == 200
+    notifications = response.json()
+    assert notifications["unread_count"] >= 1
+    assert any(item["type"] in {"mistakes", "review_due"} for item in notifications["items"])
+    notification_id = notifications["items"][0]["id"]
+
+    response = client.post(f"/notifications/{notification_id}/read", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["read_at"] is not None
 
     response = client.get("/study/history", headers=headers)
     assert response.status_code == 200

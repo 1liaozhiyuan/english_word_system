@@ -2,6 +2,9 @@ from collections.abc import AsyncIterator
 import json
 
 from fastapi import HTTPException
+import json
+import re
+
 import httpx
 
 from app.core.config import settings
@@ -151,3 +154,53 @@ def generate_quiz_prompt(words: list[WordRead], quiz_type: str) -> str:
         "每题给出答案和简短解析，使用中文说明。\n\n"
         f"{word_text or '暂无单词'}"
     )
+
+
+def generate_structured_quiz_prompt(words: list[WordRead], quiz_type: str) -> str:
+    word_text = "\n\n".join(format_word(word) for word in words[:12])
+    return (
+        f"请基于这些单词生成一份{quiz_type}，只返回 JSON，不要 Markdown，不要额外解释。"
+        "JSON 格式必须是："
+        '{"questions":[{"id":"q1","type":"choice|spelling|blank","prompt":"题干",'
+        '"options":["A","B","C","D"],"answer":"正确答案","explanation":"中文解析","related_word":"关联单词"}]}。'
+        "要求：共 6 道题；选择题必须有 4 个选项；拼写题和填空题 options 为空数组；"
+        "答案不要提前写在题干里；解析用于用户提交答案后再展示。\n\n"
+        f"{word_text or '暂无单词'}"
+    )
+
+
+def parse_structured_quiz(content: str) -> list[dict[str, object]]:
+    text = content.strip()
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
+    if fenced:
+        text = fenced.group(1).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+    data = json.loads(text)
+    raw_questions = data.get("questions", []) if isinstance(data, dict) else []
+    questions: list[dict[str, object]] = []
+    for index, item in enumerate(raw_questions[:10], start=1):
+        if not isinstance(item, dict):
+            continue
+        prompt = str(item.get("prompt") or "").strip()
+        answer = str(item.get("answer") or "").strip()
+        if not prompt or not answer:
+            continue
+        question_type = str(item.get("type") or "choice").strip()
+        if question_type not in {"choice", "spelling", "blank"}:
+            question_type = "choice"
+        options = item.get("options") if isinstance(item.get("options"), list) else []
+        questions.append(
+            {
+                "id": str(item.get("id") or f"q{index}"),
+                "type": question_type,
+                "prompt": prompt,
+                "options": [str(option) for option in options][:6],
+                "answer": answer,
+                "explanation": str(item.get("explanation") or "").strip(),
+                "related_word": str(item.get("related_word") or "").strip() or None,
+            }
+        )
+    return questions

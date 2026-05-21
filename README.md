@@ -13,6 +13,7 @@ backup/export tools.
 ## Features
 
 - User auth: register, login, password reset, and logged-in password change
+- Account compliance: onboarding profile, feedback submission, legal/privacy pages, and account deletion
 - Word books: CSV import preview, import/export, pagination, search, edit, delete, and batch management
 - Learning workflow: new word study, due review, configurable daily limits, auto advance, and answer delay
 - Speech practice: browser text-to-speech, auto play, example reading, and US/UK accent preference
@@ -105,6 +106,7 @@ npm run build
 /forgot-password Password reset request
 /reset-password  Password reset page
 /dashboard   Home and today's task overview
+/onboarding  New user goal setup and recommended daily plan
 /word-books  Word book selection and CSV import
 /word-books/:id Word book detail, word list, and word management
 /study       New word learning workflow
@@ -113,7 +115,11 @@ npm run build
 /favorites   Favorite words
 /quiz        Choice and spelling quiz
 /stats       Learning statistics
+/membership  Member plans and benefit explanation
 /learning-settings Daily learning plan, speech, and account settings
+/support     Help, feedback, and account deletion
+/legal       User agreement, privacy, and AI content notices
+/admin       Lightweight operations dashboard structure
 /settings    Alias for learning settings
 ```
 

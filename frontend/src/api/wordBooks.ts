@@ -4,6 +4,7 @@ import type {
   Word,
   WordBook,
   WordBookDetail,
+  WordDetail,
   WordBookImportResult,
   WordBookImportPreview,
   WordBookPayload,
@@ -80,6 +81,13 @@ export async function searchWords(
 
 export async function getWordBookWordProgress(token: string, wordBookId: number) {
   const { data } = await api.get<WordProgress[]>(`/word-books/${wordBookId}/word-progress`, {
+    headers: getAuthHeaders(token),
+  });
+  return data;
+}
+
+export async function getWordDetail(token: string, wordId: number) {
+  const { data } = await api.get<WordDetail>(`/words/${wordId}`, {
     headers: getAuthHeaders(token),
   });
   return data;

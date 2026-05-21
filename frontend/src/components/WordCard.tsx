@@ -1,6 +1,6 @@
 import { Check, CircleX, Eye, Frown, Lightbulb, Smile, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import React from 'react';
-import { explainWord, generateExample } from '../api/ai';
+import { explainWord, generateExample, saveAIExample } from '../api/ai';
 import { getErrorMessage } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { AIResultPanel } from './AIResultPanel';
@@ -36,6 +36,7 @@ export function WordCard({
   const [aiContent, setAiContent] = React.useState('');
   const [aiTitle, setAiTitle] = React.useState('AI 助手');
   const [isAiLoading, setIsAiLoading] = React.useState(false);
+  const [saveMessage, setSaveMessage] = React.useState('');
   const [answerFeedback, setAnswerFeedback] = React.useState<{ quality: number; id: number } | null>(null);
   const aiAbortRef = React.useRef<AbortController | null>(null);
 
@@ -156,6 +157,7 @@ export function WordCard({
     aiAbortRef.current = controller;
     setIsAiLoading(true);
     setAiContent('');
+    setSaveMessage('');
     setAiTitle(kind === 'explain' ? 'AI 单词讲解' : 'AI 生成例句');
 
     try {
@@ -170,6 +172,26 @@ export function WordCard({
     } finally {
       setIsAiLoading(false);
       if (aiAbortRef.current === controller) aiAbortRef.current = null;
+    }
+  }
+
+  async function handleSaveAIExample() {
+    const first = parseExampleCandidates(aiContent)[0];
+    if (!first) return;
+    await saveCandidate(first);
+  }
+
+  async function saveCandidate(candidate: ExampleCandidate) {
+    try {
+      await saveAIExample(token, {
+        word_id: item.word.id,
+        sentence: candidate.sentence,
+        translation: candidate.translation,
+        raw_content: aiContent,
+      });
+      setSaveMessage('已保存这条例句，可用于后续复习。');
+    } catch (error) {
+      setSaveMessage(getErrorMessage(error));
     }
   }
 
@@ -413,6 +435,26 @@ export function WordCard({
           </button>
         </div>
         <AIResultPanel title={aiTitle} content={aiContent} isLoading={isAiLoading} onStop={stopAI} />
+        {aiTitle.includes('例句') && aiContent && !isAiLoading && (
+          <div className="rounded-lg border p-4" style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+            <p className="text-sm" style={{ color: 'var(--muted)' }}>
+              请选择要保存的例句，系统不会默认保存整段 AI 输出。
+            </p>
+            <div className="mt-3 grid gap-2">
+              {parseExampleCandidates(aiContent).map((candidate, index) => (
+                <div className="rounded-lg border p-3" key={`${candidate.sentence}-${index}`} style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
+                  <p className="leading-7">{candidate.sentence}</p>
+                  {candidate.translation && <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>{candidate.translation}</p>}
+                  <button className="button-primary mt-3" onClick={() => saveCandidate(candidate)} type="button">
+                    保存这条
+                  </button>
+                </div>
+              ))}
+            </div>
+            {parseExampleCandidates(aiContent).length === 0 && <button className="button-primary mt-3" onClick={handleSaveAIExample} type="button">保存例句</button>}
+            {saveMessage && <p className="mt-2 text-sm font-semibold" style={{ color: 'var(--green)' }}>{saveMessage}</p>}
+          </div>
+        )}
         <AnswerButtons isSubmitting={isSubmitting || isWaitingNext} onAnswer={handleAnswer} />
         {isWaitingNext && (
           <div className="rounded-lg border p-4" style={{ borderColor: 'var(--green)', background: 'var(--green-soft)' }}>
@@ -438,6 +480,26 @@ function findVoice(lang: SpeechAccent) {
     ?? voices.find((voice) => voice.lang.toLowerCase().startsWith(lang.toLowerCase()))
     ?? voices.find((voice) => voice.lang.toLowerCase().startsWith('en'))
     ?? null;
+}
+
+type ExampleCandidate = { sentence: string; translation: string | null };
+
+function parseExampleCandidates(content: string): ExampleCandidate[] {
+  const lines = content
+    .split('\n')
+    .map((line) => line.replace(/^\s*[-*\d.、]+\s*/, '').replace(/^(英文|例句|翻译|中文)[:：]\s*/, '').trim())
+    .filter(Boolean);
+  const candidates: ExampleCandidate[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!/[a-zA-Z]/.test(line) || line.length < 8) continue;
+    const next = lines[index + 1];
+    candidates.push({
+      sentence: line.slice(0, 1000),
+      translation: next && /[\u4e00-\u9fa5]/.test(next) ? next.slice(0, 1000) : null,
+    });
+  }
+  return candidates.slice(0, 8);
 }
 
 function PromptPanel({

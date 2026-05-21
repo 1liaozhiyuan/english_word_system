@@ -47,6 +47,14 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 body {
@@ -392,6 +400,83 @@ button:disabled {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--green) 32%, var(--line));
   box-shadow: 0 16px 34px rgba(35, 48, 34, 0.1);
+}
+
+.dashboard-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--green) 22%, var(--line));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--green-soft) 72%, var(--paper)), var(--paper) 58%),
+    linear-gradient(90deg, color-mix(in srgb, var(--amber-soft) 42%, transparent), transparent 46%);
+  box-shadow: 0 24px 54px rgba(35, 48, 34, 0.12);
+}
+
+.dark .dashboard-hero {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--green-soft) 44%, var(--paper)), var(--paper) 60%),
+    linear-gradient(90deg, color-mix(in srgb, var(--amber-soft) 34%, transparent), transparent 46%);
+  box-shadow: 0 24px 58px rgba(0, 0, 0, 0.28);
+}
+
+.feature-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+
+.feature-group {
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 88%, var(--panel));
+  display: flex;
+  height: 360px;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px;
+}
+
+.feature-group-body {
+  display: grid;
+  min-height: 0;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+
+.feature-link {
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: 36px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 9px 10px;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.feature-link:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--green) 26%, var(--line));
+  background: var(--paper);
+}
+
+.feature-link-icon {
+  display: flex;
+  height: 36px;
+  width: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--green-soft);
+  color: var(--green);
 }
 
 .dark .stat-card {
