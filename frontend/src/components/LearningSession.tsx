@@ -1,5 +1,4 @@
-
-import { AlertTriangle, ArrowRight, CheckCircle2, RotateCcw, Target } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Home, Library, RotateCcw, Settings, Target, TimerReset } from 'lucide-react';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { getErrorMessage } from '../api/client';
@@ -7,6 +6,7 @@ import { getSettings } from '../api/settings';
 import { submitAnswer } from '../api/study';
 import { useAuth } from '../auth/AuthContext';
 import { Message } from './Message';
+import { LoadingState } from './LoadingState';
 import { PageHeader } from './PageHeader';
 import { WordCard } from './WordCard';
 import type { AnswerResult, StudyItem, StudyMode, Word } from '../types';
@@ -49,10 +49,25 @@ export function LearningSession({
   const [studyMode, setStudyMode] = React.useState<StudyMode>('en_to_cn');
   const [autoPlayWord, setAutoPlayWord] = React.useState(true);
   const [autoPlayExample, setAutoPlayExample] = React.useState(true);
+  const [autoRevealAfterAudio, setAutoRevealAfterAudio] = React.useState(false);
+  const [autoAdvance, setAutoAdvance] = React.useState(true);
+  const [answerDelayMs, setAnswerDelayMs] = React.useState(800);
+  const [pendingItems, setPendingItems] = React.useState<StudyItem[] | null>(null);
   const [settingsLoaded, setSettingsLoaded] = React.useState(false);
+  const [isLoading, setIsLoading] = React.useState(true);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [isWaitingNext, setIsWaitingNext] = React.useState(false);
+
+  const current = items[0];
+  const total = Math.max(initialTotal, answered + items.length);
+  const progress = total > 0 ? Math.round((answered / total) * 100) : 0;
+  const liveAccuracy = answered ? Math.round((correct / answered) * 100) : 0;
+  const isComplete = answered > 0 && items.length === 0;
+  const completionStats = getCompletionStats(answered, correct, wrongWords.length);
+  const recommendedAction = getRecommendedAction({ wrongCount: wrongWords.length, correctCount: correct, answered, nextAction });
 
   async function refresh(resetSession = false, nextBatchSize = batchSize) {
+    setIsLoading(true);
     try {
       const nextItems = await loadItems(token, nextBatchSize);
       setItems(nextItems);
@@ -62,17 +77,23 @@ export function LearningSession({
         setCorrect(0);
         setWrongWords([]);
         setLastResult(null);
+        setPendingItems(null);
+        setIsWaitingNext(false);
       }
       if (resetSession) setMessage({ text: '学习任务已重新加载。', tone: 'info' });
     } catch (error) {
       setMessage({ text: getErrorMessage(error), tone: 'error' });
+      if (resetSession) {
+        setItems([]);
+        setInitialTotal(0);
+      }
+    } finally {
+      setIsLoading(false);
     }
   }
 
   async function handleAnswer(quality: number) {
-    if (isSubmitting) return;
-    const current = items[0];
-    if (!current) return;
+    if (isSubmitting || !current) return;
 
     setIsSubmitting(true);
     try {
@@ -83,31 +104,47 @@ export function LearningSession({
         studyMode,
         current.word_book_id ?? undefined,
       );
+      const isCorrect = quality > 0;
       setAnswered((value) => value + 1);
-      if (quality > 0) {
-        setCorrect((value) => value + 1);
-      } else {
-        setWrongWords((value) => [...value, current.word]);
+      setCorrect((value) => value + (isCorrect ? 1 : 0));
+      if (!isCorrect) {
+        setWrongWords((value) => addUniqueWord(value, current.word));
       }
       setLastResult({ quality, result });
 
       const leechText = result.is_leech ? ' 已标记为重点难词。' : '';
       setMessage({
         text: `已记录：${answerText[quality]}。下次复习：${formatNextReview(result.next_review_at)}。${leechText}`,
-        tone: quality > 0 ? 'success' : 'info',
+        tone: isCorrect ? 'success' : 'info',
       });
 
-      const remainingLimit = Math.max(1, batchSize - answered - 1);
-      const nextItems = await loadItems(token, remainingLimit);
-      setItems(nextItems);
+      const answeredNext = answered + 1;
+      const sessionLimit = Math.max(1, initialTotal || batchSize);
+      const remainingLimit = Math.max(0, sessionLimit - answeredNext);
+      const nextItems = remainingLimit > 0 ? await loadItems(token, remainingLimit) : [];
       if (initialTotal === 0) {
         setInitialTotal(Math.max(1, nextItems.length + 1));
+      }
+
+      if (autoAdvance) {
+        await wait(answerDelayMs);
+        setItems(nextItems);
+      } else {
+        setPendingItems(nextItems);
+        setIsWaitingNext(true);
       }
     } catch (error) {
       setMessage({ text: getErrorMessage(error), tone: 'error' });
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function continueToNext() {
+    if (!pendingItems) return;
+    setItems(pendingItems);
+    setPendingItems(null);
+    setIsWaitingNext(false);
   }
 
   function handleBatchSizeChange(value: number) {
@@ -121,6 +158,9 @@ export function LearningSession({
         setStudyMode(settings.default_study_mode);
         setAutoPlayWord(settings.auto_play_word);
         setAutoPlayExample(settings.auto_play_example);
+        setAutoRevealAfterAudio(settings.auto_reveal_after_audio);
+        setAutoAdvance(settings.auto_advance);
+        setAnswerDelayMs(settings.answer_delay_ms);
         setSettingsLoaded(true);
       })
       .catch(() => setSettingsLoaded(true));
@@ -130,84 +170,51 @@ export function LearningSession({
     if (settingsLoaded) refresh(true, defaultBatchSize);
   }, [settingsLoaded, token, defaultBatchSize]);
 
-  const total = Math.max(initialTotal, answered + items.length);
-  const progress = total > 0 ? Math.round((answered / total) * 100) : 0;
-  const liveAccuracy = answered ? Math.round((correct / answered) * 100) : 0;
-  const isComplete = answered > 0 && items.length === 0;
-  const completionStats = getCompletionStats(answered, correct, wrongWords.length);
-  const recommendedAction = getRecommendedAction({ wrongCount: wrongWords.length, correctCount: correct, answered, nextAction });
-
   return (
     <>
       <PageHeader
         title={title}
         description={description}
         action={(
-          <button className="button-secondary" onClick={() => refresh(true)} type="button">
-            <RotateCcw size={16} />
-            重新加载
-          </button>
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
+            <Link className="button-secondary" to="/dashboard">
+              <Home size={16} />
+              首页
+            </Link>
+            <Link className="button-secondary" to="/word-books">
+              <Library size={16} />
+              词库
+            </Link>
+            <Link className="button-secondary" to="/learning-settings">
+              <Settings size={16} />
+              学习设置
+            </Link>
+            <Link className="button-secondary" to={nextAction.to}>
+              <ArrowRight size={16} />
+              {nextAction.label}
+            </Link>
+            <button className="button-secondary" disabled={isLoading || isSubmitting || isComplete} onClick={() => refresh(true)} type="button">
+              <RotateCcw size={16} />
+              {isLoading ? '加载中...' : isComplete ? '今日已完成' : '重新加载'}
+            </button>
+          </div>
         )}
       />
       <Message tone={message.tone}>{message.text}</Message>
 
-      <section className="surface mb-5 rounded-lg p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="text-sm font-bold text-[#355e3b]">学习模式</div>
-            <div className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
-              选择不同训练方式，系统会按同一套记忆进度记录表现。
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {studyModes.map(({ mode, label }) => (
-              <button
-                className={studyMode === mode ? 'button-primary' : 'button-secondary'}
-                key={mode}
-                onClick={() => setStudyMode(mode)}
-                type="button"
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
+      {isLoading && !current && <LoadingState text="正在加载学习任务..." />}
 
-      <section className="surface mb-5 rounded-lg p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="text-sm font-bold text-[#355e3b]">本轮数量</div>
-            <div className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
-              根据当前精力选择一组任务，完成后再进入下一轮。
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {[5, 10, 20, 30].map((value) => (
-              <button
-                className={batchSize === value ? 'button-primary' : 'button-secondary'}
-                key={value}
-                onClick={() => handleBatchSizeChange(value)}
-                type="button"
-              >
-                {value}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {items[0] && (
+      {!isLoading && current && (
         <>
-          <section className="surface mb-5 rounded-lg p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <section className="surface mb-5 rounded-lg p-4 sm:p-5">
+            <div className="grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
               <div>
                 <div className="text-sm font-bold text-[#355e3b]">本轮进度</div>
                 <div className="mt-1 text-2xl font-semibold">
                   {answered + 1} / {total}
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2 text-sm font-semibold" style={{ color: 'var(--muted)' }}>
+              <div className="grid grid-cols-2 gap-2 text-sm font-semibold sm:flex sm:flex-wrap sm:justify-end" style={{ color: 'var(--muted)' }}>
                 <ProgressPill label="正确" value={correct} />
                 <ProgressPill label="错误" value={wrongWords.length} />
                 <ProgressPill label="正确率" value={`${liveAccuracy}%`} />
@@ -218,29 +225,34 @@ export function LearningSession({
               <div className="h-full rounded-full bg-[#355e3b] dark:bg-[#7fb87a]" style={{ width: `${progress}%` }} />
             </div>
             {lastResult && (
-              <div className="mt-3 text-sm" style={{ color: 'var(--muted)' }}>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-sm" style={{ color: 'var(--muted)' }}>
+                <TimerReset size={16} />
                 上一题：{answerText[lastResult.quality]}，下次复习 {formatNextReview(lastResult.result.next_review_at)}
-                {lastResult.result.is_leech ? ' | 已识别为重点难词' : ''}
+                {lastResult.result.is_leech ? '，重点难词' : ''}
               </div>
             )}
           </section>
+
           <WordCard
-            item={items[0]}
+            item={current}
             studyMode={studyMode}
             autoPlayWord={autoPlayWord}
             autoPlayExample={autoPlayExample}
+            autoRevealAfterAudio={autoRevealAfterAudio}
             isSubmitting={isSubmitting}
+            isWaitingNext={isWaitingNext}
             onAnswer={handleAnswer}
+            onContinue={continueToNext}
           />
         </>
       )}
 
-      {isComplete && (
+      {!isLoading && isComplete && (
         <section className="surface rounded-lg p-6">
           <div className="grid gap-6 lg:grid-cols-[1fr_220px] lg:items-start">
             <div>
               <p className="text-sm font-bold text-[#355e3b]">本轮完成</p>
-              <h2 className="mt-2 text-4xl font-semibold tracking-normal">{completionTitle}</h2>
+              <h2 className="mt-2 text-3xl font-semibold tracking-normal sm:text-4xl">{completionTitle}</h2>
               <p className="mt-3 max-w-2xl leading-7" style={{ color: 'var(--muted)' }}>
                 {completionStats.description}
               </p>
@@ -287,10 +299,10 @@ export function LearningSession({
             </div>
           )}
 
-          <div className="mt-6 flex flex-wrap gap-2">
-            <button className="button-primary" onClick={() => refresh(true)} type="button">
-              继续一轮
-            </button>
+          <div className="mt-6 grid gap-2 sm:flex sm:flex-wrap">
+            <Link className="button-primary" to="/learning-settings">
+              调整学习数量
+            </Link>
             <Link className="button-secondary" to={recommendedAction.to}>
               {recommendedAction.label}
               <ArrowRight size={16} />
@@ -302,7 +314,7 @@ export function LearningSession({
         </section>
       )}
 
-      {!items[0] && !isComplete && (
+      {!isLoading && !current && !isComplete && (
         <div className="surface flex min-h-[360px] flex-col items-center justify-center gap-4 rounded-lg p-6 text-center" style={{ color: 'var(--muted)' }}>
           <div>{emptyText}</div>
           {emptyNextAction && (
@@ -315,6 +327,17 @@ export function LearningSession({
       )}
     </>
   );
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function addUniqueWord(words: Word[], word: Word) {
+  if (words.some((item) => item.id === word.id)) return words;
+  return [...words, word];
 }
 
 function getRecommendedAction({
@@ -355,7 +378,7 @@ function getCompletionStats(answered: number, correct: number, wrongCount: numbe
       color: 'var(--amber)',
       description: '这一轮大部分单词已经能识别，少量错误会进入错词本。现在适合做一次短复盘。',
       nextAdvice: '建议先看一眼错词，再继续下一组，避免错误记忆被带到后面的学习里。',
-      mistakeAdvice: '错词数量不多，可以在错词本里安排重练，重点看释义和例句。',
+      mistakeAdvice: '错词数量不多，可以在错词本里安排重练，重点看释义、词性和例句。',
     };
   }
 
@@ -400,7 +423,7 @@ function AdvicePanel({
 
 function ProgressPill({ label, value }: { label: string; value: number | string }) {
   return (
-    <span className="rounded-full border border-[#ddd7c7] bg-[#fbf8ef] px-3 py-1 dark:border-[#3d3a32] dark:bg-[#1f1d18]">
+    <span className="min-w-0 rounded-full border border-[#ddd7c7] bg-[#fbf8ef] px-3 py-1 text-center dark:border-[#3d3a32] dark:bg-[#1f1d18]">
       {label} {value}
     </span>
   );
@@ -418,12 +441,12 @@ function SummaryMetric({ label, value }: { label: string; value: number }) {
 function formatNextReview(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '稍后';
-  return date.toLocaleString();
+  const diffMs = date.getTime() - Date.now();
+  const diffMinutes = Math.round(diffMs / 60000);
+  if (diffMinutes <= 1) return '很快';
+  if (diffMinutes < 60) return `${diffMinutes} 分钟后`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} 小时后`;
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays} 天后`;
 }
-
-const studyModes: { mode: StudyMode; label: string }[] = [
-  { mode: 'en_to_cn', label: '英译中' },
-  { mode: 'cn_to_en', label: '中译英' },
-  { mode: 'listening', label: '听音辨义' },
-  { mode: 'spelling', label: '拼写' },
-];

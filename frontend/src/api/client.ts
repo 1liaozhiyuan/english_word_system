@@ -4,6 +4,7 @@ const apiBaseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 export const api = axios.create({
   baseURL: apiBaseURL.replace(/\/$/, ''),
+  timeout: 15000,
 });
 
 export function getAuthHeaders(token: string) {
@@ -12,6 +13,12 @@ export function getAuthHeaders(token: string) {
 
 export function getErrorMessage(error: unknown) {
   if (axios.isAxiosError(error)) {
+    if (error.code === 'ECONNABORTED') {
+      return '请求超时，请确认后端服务和数据库正在运行，然后再试一次。';
+    }
+    if (!error.response) {
+      return '无法连接后端服务，请确认后端已启动，并检查前端 API 地址配置。';
+    }
     const detail = error.response?.data?.detail;
     if (detail === 'Email already registered') {
       return '这个邮箱已经注册过了，请直接登录，或换一个邮箱注册。';

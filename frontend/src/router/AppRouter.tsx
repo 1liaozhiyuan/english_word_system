@@ -1,7 +1,9 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { AppLayout } from '../components/AppLayout';
+import { LoadingState } from '../components/LoadingState';
 import { DashboardPage } from '../pages/DashboardPage';
+import { FavoritesPage } from '../pages/FavoritesPage';
 import { ForgotPasswordPage } from '../pages/ForgotPasswordPage';
 import { LoginPage } from '../pages/LoginPage';
 import { MistakesPage } from '../pages/MistakesPage';
@@ -30,8 +32,10 @@ export function AppRouter() {
           <Route path="/study" element={<StudyPage />} />
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/mistakes" element={<MistakesPage />} />
+          <Route path="/favorites" element={<FavoritesPage />} />
           <Route path="/quiz" element={<QuizPage />} />
           <Route path="/stats" element={<StatsPage />} />
+          <Route path="/learning-settings" element={<SettingsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -42,7 +46,10 @@ export function AppRouter() {
 }
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isInitializing } = useAuth();
+  if (isInitializing) {
+    return <LoadingState text="正在检查登录状态..." />;
+  }
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
@@ -50,7 +57,10 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 function GuestOnly({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isInitializing } = useAuth();
+  if (isInitializing) {
+    return <LoadingState text="正在检查登录状态..." />;
+  }
   if (isAuthenticated) {
     return <Navigate to="/dashboard" replace />;
   }

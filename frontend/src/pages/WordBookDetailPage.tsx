@@ -16,6 +16,7 @@ import {
 import React from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { getErrorMessage } from '../api/client';
+import { getSettings } from '../api/settings';
 import {
   addWordToBook,
   batchDeleteWords,
@@ -32,7 +33,7 @@ import {
 } from '../api/wordBooks';
 import { useAuth } from '../auth/AuthContext';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { ListSkeleton } from '../components/ListSkeleton';
+import { FavoriteButton } from '../components/FavoriteButton';
 import { Message } from '../components/Message';
 import { PageHeader } from '../components/PageHeader';
 import type { WordBookSummary } from '../api/wordBooks';
@@ -70,8 +71,6 @@ const filters = [
 type FilterKey = (typeof filters)[number]['key'];
 type MessageState = { text: string; tone: 'success' | 'error' | 'info' | 'warning' };
 
-const PAGE_SIZE = 30;
-
 export function WordBookDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -90,7 +89,12 @@ export function WordBookDetailPage() {
     reviewing: 0,
     completionRate: 0,
   });
-  const [bookForm, setBookForm] = React.useState<WordBookPayload>({ title: '', description: '' });
+  const [bookForm, setBookForm] = React.useState<WordBookPayload>({
+    title: '',
+    description: '',
+    category: '通用',
+    difficulty: '标准',
+  });
   const [query, setQuery] = React.useState('');
   const [filter, setFilter] = React.useState<FilterKey>('all');
   const [message, setMessage] = React.useState<MessageState>({ text: '', tone: 'success' });
@@ -99,6 +103,7 @@ export function WordBookDetailPage() {
   const [editingWord, setEditingWord] = React.useState<WordPayload>(emptyForm);
   const [selectedIds, setSelectedIds] = React.useState<Set<number>>(new Set());
   const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(30);
   const [totalPages, setTotalPages] = React.useState(1);
   const [isLoadingWords, setIsLoadingWords] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
@@ -108,13 +113,15 @@ export function WordBookDetailPage() {
   const [showBatchDeleteConfirm, setShowBatchDeleteConfirm] = React.useState(false);
   const [moveTargetId, setMoveTargetId] = React.useState('');
   const [showMoveConfirm, setShowMoveConfirm] = React.useState(false);
+  const isMutating = isSaving || isDeleting;
 
   const loadWords = React.useCallback(async () => {
     if (!Number.isFinite(wordBookId)) return;
     setIsLoadingWords(true);
     try {
-      const result = await getWordBookWordProgressPaginated(token, wordBookId, page, PAGE_SIZE, query, filter);
+      const result = await getWordBookWordProgressPaginated(token, wordBookId, page, pageSize, query, filter);
       setWordProgress(result.items);
+      setSelectedIds((current) => keepOnlyVisibleIds(current, result.items));
       setTotalPages(result.total_pages);
       setSummary(result.summary);
     } catch (error) {
@@ -122,7 +129,7 @@ export function WordBookDetailPage() {
     } finally {
       setIsLoadingWords(false);
     }
-  }, [token, wordBookId, page, query, filter]);
+  }, [token, wordBookId, page, pageSize, query, filter]);
 
   const loadBook = React.useCallback(async () => {
     if (!Number.isFinite(wordBookId)) {
@@ -132,7 +139,12 @@ export function WordBookDetailPage() {
     try {
       const detail = await getWordBookDetail(token, wordBookId);
       setBook(detail);
-      setBookForm({ title: detail.title, description: detail.description });
+      setBookForm({
+        title: detail.title,
+        description: detail.description,
+        category: detail.category || '通用',
+        difficulty: detail.difficulty || '标准',
+      });
     } catch (error) {
       setMessage({ text: getErrorMessage(error), tone: 'error' });
     }
@@ -142,6 +154,15 @@ export function WordBookDetailPage() {
     loadBook();
     getWordBooks().then(setAllBooks).catch(() => setAllBooks([]));
   }, [loadBook]);
+
+  React.useEffect(() => {
+    getSettings(token)
+      .then((settings) => {
+        setPageSize(settings.word_book_page_size || 30);
+        setPage(1);
+      })
+      .catch(() => undefined);
+  }, [token]);
 
   React.useEffect(() => {
     loadWords();
@@ -172,6 +193,8 @@ export function WordBookDetailPage() {
       const updated = await updateWordBook(token, wordBookId, {
         title: bookForm.title.trim(),
         description: bookForm.description.trim(),
+        category: bookForm.category.trim() || '通用',
+        difficulty: bookForm.difficulty.trim() || '标准',
       });
       setBook((current) => (current ? { ...current, ...updated } : current));
       setMessage({ text: '词书信息已更新。', tone: 'success' });
@@ -263,12 +286,22 @@ export function WordBookDetailPage() {
     }
   }
 
-  async function handleRemoveWord() {
-    if (!wordToRemove) return;
+  async function removeWordNow(word: Word) {
     setIsDeleting(true);
     try {
-      await removeWordFromBook(token, wordBookId, wordToRemove.id);
+      const result = await removeWordFromBook(token, wordBookId, word.id);
       setWordToRemove(null);
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        next.delete(word.id);
+        return next;
+      });
+      setWordProgress((current) => current.filter((item) => item.word.id !== word.id));
+      if (result.word_book_deleted) {
+        window.alert('这个词书已经没有单词，系统已自动删除该词书。');
+        navigate('/word-books', { replace: true });
+        return;
+      }
       setMessage({ text: '单词已从当前词书移除。', tone: 'success' });
       await loadBook();
       await loadWords();
@@ -279,15 +312,34 @@ export function WordBookDetailPage() {
     }
   }
 
+  async function handleRemoveWord() {
+    if (!wordToRemove) return;
+    await removeWordNow(wordToRemove);
+  }
+
+  async function requestRemoveWord(word: Word) {
+    const confirmed = window.confirm(`确认从当前词书移除 “${word.text}”？相关学习进度也会同步移除。`);
+    if (!confirmed) return;
+    await removeWordNow(word);
+  }
+
   async function handleBatchDelete() {
     if (selectedIds.size === 0) return;
-    const count = selectedIds.size;
+    const confirmed = window.confirm(`确认从当前词书批量移除 ${selectedIds.size} 个单词？相关学习进度也会同步移除。`);
+    if (!confirmed) return;
     setIsDeleting(true);
     try {
-      await batchDeleteWords(token, wordBookId, [...selectedIds]);
+      const result = await batchDeleteWords(token, wordBookId, [...selectedIds]);
+      const deletedIds = new Set(selectedIds);
       setSelectedIds(new Set());
       setShowBatchDeleteConfirm(false);
-      setMessage({ text: `已移除 ${count} 个单词。`, tone: 'success' });
+      setWordProgress((current) => current.filter((item) => !deletedIds.has(item.word.id)));
+      if (result.word_book_deleted) {
+        window.alert(`已移除 ${result.deleted} 个单词。这个词书已经为空，系统已自动删除该词书。`);
+        navigate('/word-books', { replace: true });
+        return;
+      }
+      setMessage({ text: `已移除 ${result.deleted} 个单词。`, tone: 'success' });
       await loadBook();
       await loadWords();
     } catch (error) {
@@ -326,6 +378,13 @@ export function WordBookDetailPage() {
     });
   }
 
+  function goToPage(nextPage: number) {
+    setSelectedIds(new Set());
+    setEditingWordId(null);
+    setMoveTargetId('');
+    setPage(nextPage);
+  }
+
   function toggleSelectCurrentPage() {
     const currentIds = wordProgress.map((item) => item.word.id);
     const allSelected = currentIds.length > 0 && currentIds.every((wordId) => selectedIds.has(wordId));
@@ -339,8 +398,25 @@ export function WordBookDetailPage() {
     });
   }
 
+  function clearFilters() {
+    setQuery('');
+    setFilter('all');
+    setPage(1);
+    setSelectedIds(new Set());
+    setEditingWordId(null);
+    setMoveTargetId('');
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setMoveTargetId('');
+    setShowBatchDeleteConfirm(false);
+    setShowMoveConfirm(false);
+  }
+
   const selectedTargetBook = allBooks.find((item) => item.id === Number(moveTargetId));
   const currentPageAllSelected = wordProgress.length > 0 && wordProgress.every((item) => selectedIds.has(item.word.id));
+  const hasActiveFilter = Boolean(query.trim()) || filter !== 'all';
 
   return (
     <>
@@ -348,12 +424,12 @@ export function WordBookDetailPage() {
         title={book?.title ?? '词书详情'}
         description={book?.description || '查看单词学习状态，并管理这本词书中的内容。'}
         action={(
-          <div className="flex flex-wrap gap-2">
+          <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-2">
             <Link className="button-secondary" to="/word-books">
               <ArrowLeft size={16} />
               返回词书
             </Link>
-            <button className="button-primary" disabled={!book} onClick={handleSelect} type="button">
+            <button className="button-primary" disabled={!book || isMutating} onClick={handleSelect} type="button">
               <Plus size={16} />
               加入学习
             </button>
@@ -364,42 +440,70 @@ export function WordBookDetailPage() {
 
       {book && (
         <>
-          <section className="surface mb-5 rounded-lg p-5">
-            <form className="grid gap-3 lg:grid-cols-[1fr_1fr_auto_auto]" onSubmit={handleUpdateBook}>
+          <section className="surface mb-5 rounded-lg p-4 sm:p-5">
+            <form className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px_150px_auto_auto]" onSubmit={handleUpdateBook}>
               <input
                 className="input"
+                disabled={isMutating}
                 value={bookForm.title}
                 onChange={(event) => setBookForm({ ...bookForm, title: event.target.value })}
                 placeholder="词书名称"
               />
               <input
                 className="input"
+                disabled={isMutating}
                 value={bookForm.description}
                 onChange={(event) => setBookForm({ ...bookForm, description: event.target.value })}
                 placeholder="词书描述"
               />
+              <input
+                className="input"
+                disabled={isMutating}
+                value={bookForm.category}
+                onChange={(event) => setBookForm({ ...bookForm, category: event.target.value })}
+                placeholder="分类"
+              />
+              <select
+                className="input"
+                disabled={isMutating}
+                value={bookForm.difficulty}
+                onChange={(event) => setBookForm({ ...bookForm, difficulty: event.target.value })}
+              >
+                <option value="入门">入门</option>
+                <option value="标准">标准</option>
+                <option value="进阶">进阶</option>
+                <option value="考试">考试</option>
+              </select>
               <button className="button-secondary" disabled={isSaving} type="submit">
                 <Save size={16} />
                 保存
               </button>
-              <button className="button-secondary" type="button" onClick={handleExportBook}>
+              <button className="button-secondary" disabled={isMutating} type="button" onClick={handleExportBook}>
                 <Download size={16} />
                 导出 CSV
               </button>
             </form>
-            <button className="button-secondary mt-3" style={{ color: 'var(--red)' }} type="button" onClick={() => setShowDeleteBookConfirm(true)}>
+            <button className="button-secondary mt-3 w-full sm:w-auto" disabled={isMutating} style={{ color: 'var(--red)' }} type="button" onClick={() => setShowDeleteBookConfirm(true)}>
               <Trash2 size={16} />
               删除词书
             </button>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
+              <span className="rounded-full px-3 py-1" style={{ background: 'var(--green-soft)', color: 'var(--green)' }}>
+                {book.category || '通用'}
+              </span>
+              <span className="rounded-full px-3 py-1" style={{ background: 'var(--blue-soft)', color: 'var(--blue)' }}>
+                {book.difficulty || '标准'}
+              </span>
+            </div>
           </section>
 
-          <section className="surface mb-5 rounded-lg p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <section className="surface mb-5 rounded-lg p-4 sm:p-5">
+            <div className="grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
               <div>
                 <p className="text-sm font-bold" style={{ color: 'var(--green)' }}>词书进度</p>
                 <h3 className="mt-1 text-3xl font-semibold" style={{ color: 'var(--ink)' }}>{summary.completionRate}%</h3>
               </div>
-              <div className="w-full max-w-md">
+              <div className="w-full max-w-md lg:justify-self-end">
                 <div className="mb-2 flex justify-between text-sm font-semibold" style={{ color: 'var(--muted)' }}>
                   <span>已掌握 {summary.mastered}</span>
                   <span>总计 {summary.total}</span>
@@ -418,25 +522,34 @@ export function WordBookDetailPage() {
             </div>
           </section>
 
-          <section className="surface mb-5 rounded-lg p-5">
+          <section className="surface mb-5 rounded-lg p-4 sm:p-5">
             <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
-              <label className="relative block">
+              <label className="relative block min-w-0">
                 <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" size={18} style={{ color: 'var(--muted)' }} />
                 <input
                   className="input pl-10"
+                  disabled={isMutating}
                   value={query}
-                  onChange={(event) => { setQuery(event.target.value); setPage(1); }}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    setPage(1);
+                    setSelectedIds(new Set());
+                    setEditingWordId(null);
+                  }}
                   placeholder="搜索英文、释义、词性或例句"
                 />
               </label>
-              <div className="flex flex-wrap gap-2">
+              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-wrap lg:overflow-visible lg:px-0 lg:pb-0">
                 {filters.map((item) => (
                   <button
-                    className={filter === item.key ? 'button-primary' : 'button-secondary'}
+                    className={`${filter === item.key ? 'button-primary' : 'button-secondary'} shrink-0`}
+                    disabled={isMutating}
                     key={item.key}
                     onClick={() => {
                       setFilter(item.key);
                       setPage(1);
+                      setSelectedIds(new Set());
+                      setEditingWordId(null);
                     }}
                     type="button"
                   >
@@ -447,41 +560,48 @@ export function WordBookDetailPage() {
             </div>
           </section>
 
-          {selectedIds.size > 0 && (
-            <section className="surface mb-5 rounded-lg p-5">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-sm font-bold" style={{ color: 'var(--ink)' }}>
-                  已选择 {selectedIds.size} 个单词
-                </span>
-                <button className="button-secondary" onClick={() => setShowBatchDeleteConfirm(true)} type="button">
+          <section className="surface mb-5 rounded-lg p-4 sm:p-5">
+            <div className="grid gap-3 xl:grid-cols-[auto_auto_minmax(220px,1fr)_auto_auto] xl:items-center">
+              <span className="text-sm font-bold" style={{ color: 'var(--ink)' }}>
+                已选择 {selectedIds.size} 个单词 · 每页 {pageSize} 个
+              </span>
+              <button className="button-secondary" disabled={isMutating || wordProgress.length === 0} onClick={toggleSelectCurrentPage} type="button">
+                {currentPageAllSelected ? <Square size={16} /> : <CheckSquare size={16} />}
+                {currentPageAllSelected ? '取消本页' : '选择本页'}
+              </button>
+              <select
+                className="input min-w-0"
+                disabled={isMutating || selectedIds.size === 0}
+                onChange={(e) => setMoveTargetId(e.target.value)}
+                value={moveTargetId}
+              >
+                <option value="">选择目标词书</option>
+                {allBooks.filter((item) => item.id !== wordBookId).map((item) => (
+                  <option key={item.id} value={item.id}>{item.title} ({item.word_count} 词)</option>
+                ))}
+              </select>
+              <button className="button-secondary" disabled={isMutating || selectedIds.size === 0 || !moveTargetId} onClick={() => setShowMoveConfirm(true)} type="button">
+                确认移动
+              </button>
+              <div className="grid grid-cols-2 gap-2 sm:flex">
+                <button className="button-secondary" disabled={isMutating || selectedIds.size === 0} onClick={handleBatchDelete} type="button">
                   <Trash2 size={16} />
                   批量移除
                 </button>
-                {allBooks.length > 0 && (
-                  <>
-                    <select className="input w-auto min-w-[220px]" onChange={(e) => setMoveTargetId(e.target.value)} value={moveTargetId}>
-                      <option value="">选择目标词书</option>
-                      {allBooks.filter((item) => item.id !== wordBookId).map((item) => (
-                        <option key={item.id} value={item.id}>{item.title} ({item.word_count} 词)</option>
-                      ))}
-                    </select>
-                    <button className="button-secondary" disabled={!moveTargetId} onClick={() => setShowMoveConfirm(true)} type="button">
-                      确认移动
-                    </button>
-                  </>
-                )}
-                <button className="button-secondary" onClick={toggleSelectCurrentPage} type="button">
-                  {currentPageAllSelected ? <Square size={16} /> : <CheckSquare size={16} />}
-                  {currentPageAllSelected ? '取消本页' : '选择本页'}
+                <button className="button-secondary" disabled={isMutating || selectedIds.size === 0} onClick={clearSelection} type="button">
+                  <X size={16} />
+                  取消选择
                 </button>
               </div>
-            </section>
-          )}
+            </div>
+          </section>
 
-          <section className="surface mb-5 rounded-lg p-5">
+          <section className="surface mb-5 rounded-lg p-4 sm:p-5">
             <h3 className="text-xl font-semibold" style={{ color: 'var(--ink)' }}>新增单词</h3>
             <WordForm
               actionLabel={isSaving ? '保存中...' : '新增单词'}
+              disabled={isMutating}
+              onValidationError={setMessage}
               onChange={setNewWord}
               onSubmit={handleAddWord}
               value={newWord}
@@ -489,15 +609,16 @@ export function WordBookDetailPage() {
           </section>
 
           <section className="grid gap-3">
-            {isLoadingWords && <ListSkeleton count={3} />}
+            {isLoadingWords && <WordDetailSkeleton count={3} />}
 
             {!isLoadingWords && wordProgress.map((item) => (
-              <article className="surface rounded-lg p-5" key={item.word.id}>
+              <article className="surface min-w-0 rounded-lg p-4 sm:p-5" key={item.word.id}>
                 <div className="flex items-start gap-3">
                   <div className="checkbox-cell pt-1">
                     <button
                       aria-label={selectedIds.has(item.word.id) ? '取消选择单词' : '选择单词'}
                       className="rounded p-1"
+                      disabled={isMutating}
                       onClick={() => toggleSelect(item.word.id)}
                       style={{ color: selectedIds.has(item.word.id) ? 'var(--green)' : 'var(--muted)' }}
                       type="button"
@@ -510,6 +631,8 @@ export function WordBookDetailPage() {
                       <div>
                         <WordForm
                           actionLabel={isSaving ? '保存中...' : '保存修改'}
+                          disabled={isMutating}
+                          onValidationError={setMessage}
                           onChange={setEditingWord}
                           onSubmit={(event) => {
                             event.preventDefault();
@@ -517,7 +640,7 @@ export function WordBookDetailPage() {
                           }}
                           value={editingWord}
                         />
-                        <button className="button-secondary mt-3" onClick={() => setEditingWordId(null)} type="button">
+                        <button className="button-secondary mt-3 w-full sm:w-auto" disabled={isMutating} onClick={() => setEditingWordId(null)} type="button">
                           <X size={16} />
                           取消编辑
                         </button>
@@ -525,8 +648,9 @@ export function WordBookDetailPage() {
                     ) : (
                       <WordProgressCard
                         item={item}
+                        isMutating={isMutating}
                         onEdit={() => startEditing(item.word)}
-                        onRemove={() => setWordToRemove(item.word)}
+                        onRemove={() => requestRemoveWord(item.word)}
                       />
                     )}
                   </div>
@@ -535,14 +659,19 @@ export function WordBookDetailPage() {
             ))}
 
             {!isLoadingWords && wordProgress.length === 0 && (
-              <div className="surface rounded-lg p-5 text-sm" style={{ color: 'var(--muted)' }}>
-                没有找到匹配的单词。
+              <div className="surface rounded-lg p-5 text-center text-sm" style={{ color: 'var(--muted)' }}>
+                <div>没有找到匹配的单词。</div>
+                {hasActiveFilter && (
+                  <button className="button-secondary mt-4" onClick={clearFilters} type="button">
+                    清空搜索和筛选
+                  </button>
+                )}
               </div>
             )}
 
             {!isLoadingWords && totalPages > 1 && (
               <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                <button className="pagination-btn" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} type="button">
+                <button className="pagination-btn" disabled={page <= 1 || isMutating} onClick={() => goToPage(Math.max(1, page - 1))} type="button">
                   <ChevronLeft size={16} />
                   上一页
                 </button>
@@ -550,13 +679,14 @@ export function WordBookDetailPage() {
                   <button
                     key={item}
                     className={`pagination-btn ${item === page ? 'pagination-btn-active' : ''}`}
-                    onClick={() => setPage(item)}
+                    disabled={isMutating}
+                    onClick={() => goToPage(item)}
                     type="button"
                   >
                     {item}
                   </button>
                 ))}
-                <button className="pagination-btn" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} type="button">
+                <button className="pagination-btn" disabled={page >= totalPages || isMutating} onClick={() => goToPage(Math.min(totalPages, page + 1))} type="button">
                   下一页
                   <ChevronRight size={16} />
                 </button>
@@ -609,10 +739,12 @@ export function WordBookDetailPage() {
 
 function WordProgressCard({
   item,
+  isMutating,
   onEdit,
   onRemove,
 }: {
   item: WordProgress;
+  isMutating: boolean;
   onEdit: () => void;
   onRemove: () => void;
 }) {
@@ -621,9 +753,9 @@ function WordProgressCard({
   return (
     <>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-2xl font-semibold" style={{ color: 'var(--ink)' }}>{item.word.text}</h3>
+            <h3 className="min-w-0 break-words text-2xl font-semibold" style={{ color: 'var(--ink)' }}>{item.word.text}</h3>
             <span className={statusBadgeClass(statusKey)}>{statusText[statusKey]}</span>
             {item.is_leech && (
               <span className="rounded-full bg-[#f4dddd] px-3 py-1 text-xs font-bold text-[#a13d3d] dark:bg-[#2e1b1b] dark:text-[#d47373]">
@@ -631,32 +763,33 @@ function WordProgressCard({
               </span>
             )}
           </div>
-          <p className="mt-1 text-sm font-semibold" style={{ color: 'var(--green)' }}>{item.word.phonetic}</p>
+          <p className="mt-1 break-words text-sm font-semibold" style={{ color: 'var(--green)' }}>{item.word.phonetic}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid gap-2 sm:flex sm:flex-wrap">
           {item.word.part_of_speech && (
             <span className="rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--panel)', color: 'var(--muted)' }}>
               {item.word.part_of_speech}
             </span>
           )}
-          <button className="button-secondary" onClick={onEdit} type="button">
+          <button className="button-secondary" disabled={isMutating} onClick={onEdit} type="button">
             <Pencil size={16} />
             编辑
           </button>
-          <button className="button-secondary" onClick={onRemove} type="button">
+          <FavoriteButton wordId={item.word.id} initialFavorite={item.is_favorite} disabled={isMutating} />
+          <button className="button-secondary" disabled={isMutating} onClick={onRemove} type="button">
             <Trash2 size={16} />
             移除
           </button>
         </div>
       </div>
-      <p className="mt-4 text-xl" style={{ color: 'var(--ink)' }}>{item.word.meaning}</p>
+      <p className="mt-4 break-words text-xl" style={{ color: 'var(--ink)' }}>{item.word.meaning}</p>
       {item.word.note && (
-        <div className="mt-2 rounded-lg p-3 text-sm" style={{ background: 'var(--amber-soft)', color: 'var(--amber)' }}>
+        <div className="mt-2 break-words rounded-lg p-3 text-sm leading-6" style={{ background: 'var(--amber-soft)', color: 'var(--amber)' }}>
           笔记：{item.word.note}
         </div>
       )}
       {(item.word.example_sentence || item.word.example_translation) && (
-        <div className="mt-4 rounded-lg p-4 text-sm leading-7" style={{ background: 'var(--panel)', color: 'var(--muted)' }}>
+        <div className="mt-4 break-words rounded-lg p-4 text-sm leading-7" style={{ background: 'var(--panel)', color: 'var(--muted)' }}>
           {item.word.example_sentence && <p>{item.word.example_sentence}</p>}
           {item.word.example_translation && <p>{item.word.example_translation}</p>}
         </div>
@@ -677,28 +810,62 @@ function WordForm({
   onChange,
   onSubmit,
   actionLabel,
+  disabled = false,
+  onValidationError,
 }: {
   value: WordPayload;
   onChange: (value: WordPayload) => void;
   onSubmit: (event: React.FormEvent) => void;
   actionLabel: string;
+  disabled?: boolean;
+  onValidationError?: (message: MessageState) => void;
 }) {
+  const textInputRef = React.useRef<HTMLInputElement | null>(null);
+  const meaningInputRef = React.useRef<HTMLInputElement | null>(null);
+
   function updateField(field: keyof WordPayload, nextValue: string) {
     onChange({ ...value, [field]: nextValue });
   }
 
+  function handleSubmit(event: React.FormEvent) {
+    if (!value.text.trim()) {
+      event.preventDefault();
+      onValidationError?.({ text: '请先填写英文单词。', tone: 'warning' });
+      textInputRef.current?.focus();
+      return;
+    }
+    if (!value.meaning.trim()) {
+      event.preventDefault();
+      onValidationError?.({ text: '请先填写中文释义。', tone: 'warning' });
+      meaningInputRef.current?.focus();
+      return;
+    }
+    onSubmit(event);
+  }
+
   return (
-    <form className="mt-4 grid gap-3" onSubmit={onSubmit}>
-      <div className="grid gap-3 md:grid-cols-2">
-        <input className="input" value={value.text} onChange={(event) => updateField('text', event.target.value)} placeholder="英文单词，必填" />
-        <input className="input" value={value.meaning} onChange={(event) => updateField('meaning', event.target.value)} placeholder="中文释义，必填" />
-        <input className="input" value={value.phonetic ?? ''} onChange={(event) => updateField('phonetic', event.target.value)} placeholder="音标，可选" />
-        <input className="input" value={value.part_of_speech ?? ''} onChange={(event) => updateField('part_of_speech', event.target.value)} placeholder="词性，可选" />
+    <form className="mt-4 grid gap-4" onSubmit={handleSubmit}>
+      <div className="rounded-lg border p-3 sm:p-4" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
+        <div className="mb-3 text-sm font-bold" style={{ color: 'var(--green)' }}>基础信息</div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <input ref={textInputRef} className="input" disabled={disabled} value={value.text} onChange={(event) => updateField('text', event.target.value)} placeholder="英文单词，必填" />
+          <input ref={meaningInputRef} className="input" disabled={disabled} value={value.meaning} onChange={(event) => updateField('meaning', event.target.value)} placeholder="中文释义，必填" />
+          <input className="input" disabled={disabled} value={value.phonetic ?? ''} onChange={(event) => updateField('phonetic', event.target.value)} placeholder="音标，可选" />
+          <input className="input" disabled={disabled} value={value.part_of_speech ?? ''} onChange={(event) => updateField('part_of_speech', event.target.value)} placeholder="词性，可选" />
+        </div>
       </div>
-      <input className="input" value={value.example_sentence ?? ''} onChange={(event) => updateField('example_sentence', event.target.value)} placeholder="英文例句，可选" />
-      <input className="input" value={value.example_translation ?? ''} onChange={(event) => updateField('example_translation', event.target.value)} placeholder="例句翻译，可选" />
-      <input className="input" value={value.note ?? ''} onChange={(event) => updateField('note', event.target.value)} placeholder="笔记/记忆技巧，可选" />
-      <button className="button-primary w-fit" type="submit">
+      <div className="rounded-lg border p-3 sm:p-4" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
+        <div className="mb-3 text-sm font-bold" style={{ color: 'var(--green)' }}>例句</div>
+        <div className="grid gap-3">
+          <input className="input" disabled={disabled} value={value.example_sentence ?? ''} onChange={(event) => updateField('example_sentence', event.target.value)} placeholder="英文例句，可选" />
+          <input className="input" disabled={disabled} value={value.example_translation ?? ''} onChange={(event) => updateField('example_translation', event.target.value)} placeholder="例句翻译，可选" />
+        </div>
+      </div>
+      <div className="rounded-lg border p-3 sm:p-4" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
+        <div className="mb-3 text-sm font-bold" style={{ color: 'var(--green)' }}>笔记</div>
+        <input className="input" disabled={disabled} value={value.note ?? ''} onChange={(event) => updateField('note', event.target.value)} placeholder="笔记/记忆技巧，可选" />
+      </div>
+      <button className="button-primary w-full sm:w-fit" disabled={disabled} type="submit">
         <Check size={16} />
         {actionLabel}
       </button>
@@ -756,4 +923,39 @@ function normalizePayload(payload: WordPayload): WordPayload {
     example_translation: payload.example_translation?.trim() || null,
     note: payload.note?.trim() || null,
   };
+}
+
+function keepOnlyVisibleIds(selected: Set<number>, items: WordProgress[]) {
+  const visibleIds = new Set(items.map((item) => item.word.id));
+  return new Set([...selected].filter((id) => visibleIds.has(id)));
+}
+
+function WordDetailSkeleton({ count = 3 }: { count?: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, index) => (
+        <div className="surface rounded-lg p-4 sm:p-5" key={index}>
+          <div className="flex items-start gap-3">
+            <div className="skeleton h-8 w-8 rounded-lg" />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="skeleton h-8 w-40 rounded" />
+                <div className="flex gap-2">
+                  <div className="skeleton h-10 w-20 rounded-lg" />
+                  <div className="skeleton h-10 w-20 rounded-lg" />
+                </div>
+              </div>
+              <div className="skeleton mt-4 h-6 w-2/3 rounded" />
+              <div className="skeleton mt-3 h-20 w-full rounded-lg" />
+              <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                {Array.from({ length: 5 }, (_, metricIndex) => (
+                  <div className="skeleton h-16 rounded-lg" key={metricIndex} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </>
+  );
 }

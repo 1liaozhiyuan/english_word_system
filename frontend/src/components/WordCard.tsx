@@ -1,9 +1,10 @@
-import { Check, CircleX, Eye, Frown, Smile, Sparkles, Volume2, VolumeX } from 'lucide-react';
+import { Check, CircleX, Eye, Frown, Lightbulb, Smile, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import React from 'react';
 import { explainWord, generateExample } from '../api/ai';
 import { getErrorMessage } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { AIResultPanel } from './AIResultPanel';
+import { FavoriteButton } from './FavoriteButton';
 import type { StudyItem, StudyMode } from '../types';
 
 export function WordCard({
@@ -11,15 +12,21 @@ export function WordCard({
   studyMode,
   autoPlayWord = true,
   autoPlayExample = true,
+  autoRevealAfterAudio = false,
   isSubmitting = false,
+  isWaitingNext = false,
   onAnswer,
+  onContinue,
 }: {
   item: StudyItem;
   studyMode: StudyMode;
   autoPlayWord?: boolean;
   autoPlayExample?: boolean;
+  autoRevealAfterAudio?: boolean;
   isSubmitting?: boolean;
-  onAnswer: (quality: number) => void;
+  isWaitingNext?: boolean;
+  onAnswer: (quality: number) => void | Promise<void>;
+  onContinue?: () => void;
 }) {
   const { token } = useAuth();
   const [showAnswer, setShowAnswer] = React.useState(false);
@@ -42,7 +49,10 @@ export function WordCard({
 
     const timer = window.setTimeout(() => {
       if (autoPlayWord && studyMode !== 'cn_to_en') {
-        speakText(item.word.text, { cancelFirst: false });
+        speakText(item.word.text, {
+          cancelFirst: false,
+          onEnd: autoRevealAfterAudio ? revealAnswer : undefined,
+        });
       }
     }, 260);
 
@@ -50,7 +60,7 @@ export function WordCard({
       window.clearTimeout(timer);
       stopSpeech();
     };
-  }, [item.progress_id, studyMode, autoPlayWord]);
+  }, [item.progress_id, studyMode, autoPlayWord, autoRevealAfterAudio]);
 
   React.useEffect(() => {
     if (!showAnswer) return;
@@ -64,30 +74,57 @@ export function WordCard({
   React.useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (!showAnswer || isSubmitting) return;
+      if (event.key === 'Enter' && isWaitingNext) {
+        event.preventDefault();
+        onContinue?.();
+        return;
+      }
       if (event.key >= '1' && event.key <= '4') {
+        event.preventDefault();
         handleAnswer(Number(event.key) - 1);
+      }
+      if (event.key === ' ') {
+        event.preventDefault();
+        speakText(item.word.text);
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showAnswer, isSubmitting]);
+  }, [showAnswer, isSubmitting, isWaitingNext, item.progress_id, onContinue]);
+
+  React.useEffect(() => {
+    function handleHiddenKeyDown(event: KeyboardEvent) {
+      if (showAnswer || isSubmitting) return;
+      if (event.key === ' ') {
+        event.preventDefault();
+        speakText(item.word.text);
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        revealAnswer();
+      }
+    }
+    window.addEventListener('keydown', handleHiddenKeyDown);
+    return () => window.removeEventListener('keydown', handleHiddenKeyDown);
+  }, [showAnswer, isSubmitting, item.progress_id]);
 
   function stopSpeech() {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
   }
 
-  function createUtterance(text: string) {
+  function createUtterance(text: string, onEnd?: () => void) {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'en-US';
     utterance.rate = 0.86;
+    if (onEnd) utterance.onend = onEnd;
     return utterance;
   }
 
-  function speakText(text: string, options: { cancelFirst?: boolean } = {}) {
+  function speakText(text: string, options: { cancelFirst?: boolean; onEnd?: () => void } = {}) {
     if (!window.speechSynthesis || !text.trim()) return;
     if (options.cancelFirst ?? true) stopSpeech();
-    window.speechSynthesis.speak(createUtterance(text));
+    window.speechSynthesis.speak(createUtterance(text, options.onEnd));
   }
 
   function speakSequence(texts: string[]) {
@@ -103,6 +140,7 @@ export function WordCard({
   }
 
   function handleAnswer(quality: number) {
+    if (answerFeedback || isWaitingNext) return;
     stopSpeech();
     setAnswerFeedback({ quality, id: Date.now() });
     onAnswer(quality);
@@ -171,6 +209,9 @@ export function WordCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="chip bg-white/80 text-[#6b6a62] dark:bg-[#1f1d18] dark:text-[#9a978d]">
               {modeLabel[studyMode]}
+            </span>
+            <span className="chip bg-white/80 text-[#6b6a62] dark:bg-[#1f1d18] dark:text-[#9a978d]">
+              空格发音 · Enter {showAnswer ? '下一词' : '显答案'}
             </span>
             <button className="button-secondary" disabled={isSubmitting} onClick={stopSpeech} type="button">
               <VolumeX size={16} />
@@ -286,7 +327,7 @@ export function WordCard({
             <Volume2 size={19} />
           </button>
         </div>
-        <p className="mt-4 text-lg font-semibold text-[#355e3b]">{item.word.phonetic}</p>
+        {item.word.phonetic && <p className="mt-4 text-lg font-semibold text-[#355e3b]">{item.word.phonetic}</p>}
         <PromptPanel
           text="先在心里回忆释义、词性和例句，再显示答案。这样记录的掌握度会更接近真实记忆状态。"
           onReveal={revealAnswer}
@@ -314,7 +355,7 @@ export function WordCard({
               <Volume2 size={19} />
             </button>
           </div>
-          <p className="mt-4 text-lg font-semibold text-[#355e3b]">{item.word.phonetic}</p>
+          {item.word.phonetic && <p className="mt-4 text-lg font-semibold text-[#355e3b]">{item.word.phonetic}</p>}
           {canAutoGrade && (
             <SpellingFeedback userInput={userInput} target={item.word.text} result={spellingResult} />
           )}
@@ -322,9 +363,11 @@ export function WordCard({
 
         <div className="mt-6">
           <p className="text-3xl font-semibold">{item.word.meaning}</p>
-          <p className="mt-2 text-sm font-medium" style={{ color: 'var(--muted)' }}>
-            {item.word.part_of_speech}
-          </p>
+          {item.word.part_of_speech && (
+            <p className="mt-2 text-sm font-medium" style={{ color: 'var(--muted)' }}>
+              {item.word.part_of_speech}
+            </p>
+          )}
           {(item.word.example_sentence || item.word.example_translation) && (
             <div className="mt-8 rounded-lg border border-[#ddd7c7] bg-[#fbf8ef] p-5 dark:border-[#3d3a32] dark:bg-[#1f1d18]">
               {item.word.example_sentence && <p className="text-lg leading-8">{item.word.example_sentence}</p>}
@@ -335,12 +378,18 @@ export function WordCard({
               )}
             </div>
           )}
+          {item.word.note && (
+            <div className="mt-4 flex gap-2 rounded-lg border border-[#ddd7c7] bg-[#fffdf8] p-4 text-sm dark:border-[#3d3a32] dark:bg-[#1f1d18]">
+              <Lightbulb size={18} style={{ color: 'var(--amber)' }} />
+              <span style={{ color: 'var(--muted)' }}>{item.word.note}</span>
+            </div>
+          )}
         </div>
 
         {canAutoGrade && (
           <button
             className="button-primary w-fit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || isWaitingNext}
             onClick={() => handleAnswer(spellingResult.quality)}
             type="button"
           >
@@ -349,6 +398,7 @@ export function WordCard({
         )}
 
         <div className="flex flex-wrap gap-2">
+          <FavoriteButton wordId={item.word.id} initialFavorite={item.is_favorite} disabled={isSubmitting || isAiLoading} />
           <button className="button-secondary" disabled={isSubmitting || isAiLoading} onClick={() => runAI('explain')} type="button">
             <Sparkles size={16} />
             AI 讲解
@@ -359,7 +409,19 @@ export function WordCard({
           </button>
         </div>
         <AIResultPanel title={aiTitle} content={aiContent} isLoading={isAiLoading} onStop={stopAI} />
-        <AnswerButtons isSubmitting={isSubmitting} onAnswer={handleAnswer} />
+        <AnswerButtons isSubmitting={isSubmitting || isWaitingNext} onAnswer={handleAnswer} />
+        {isWaitingNext && (
+          <div className="rounded-lg border p-4" style={{ borderColor: 'var(--green)', background: 'var(--green-soft)' }}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm font-bold" style={{ color: 'var(--green)' }}>
+                已记录本题，准备进入下一个单词。
+              </div>
+              <button className="button-primary" onClick={onContinue} type="button">
+                下一个单词
+              </button>
+            </div>
+          </div>
+        )}
       </>
     );
   }
@@ -518,7 +580,7 @@ function AnswerButtons({
   onAnswer: (quality: number) => void;
 }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-4">
+    <div className="answer-action-grid grid gap-3 sm:grid-cols-4">
       <button className="answer answer-wrong" disabled={isSubmitting} onClick={() => onAnswer(0)} title="快捷键 1" type="button">
         <CircleX size={18} />
         不认识

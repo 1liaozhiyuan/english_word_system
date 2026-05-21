@@ -41,6 +41,10 @@ class UserSettings(SQLModel, table=True):
     default_study_mode: StudyMode = StudyMode.en_to_cn
     auto_play_word: bool = True
     auto_play_example: bool = True
+    auto_reveal_after_audio: bool = False
+    auto_advance: bool = True
+    answer_delay_ms: int = 800
+    word_book_page_size: int = 30
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -49,6 +53,8 @@ class WordBook(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     title: str
     description: str = ""
+    category: str = "通用"
+    difficulty: str = "标准"
 
     items: list["WordBookItem"] = Relationship(back_populates="word_book")
 
@@ -65,6 +71,16 @@ class Word(SQLModel, table=True):
 
     books: list["WordBookItem"] = Relationship(back_populates="word")
     progress: list["UserWordProgress"] = Relationship(back_populates="word")
+    favorites: list["FavoriteWord"] = Relationship(back_populates="word")
+
+
+class FavoriteWord(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    word_id: int = Field(foreign_key="word.id", index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+
+    word: Word = Relationship(back_populates="favorites")
 
 
 class WordBookItem(SQLModel, table=True):

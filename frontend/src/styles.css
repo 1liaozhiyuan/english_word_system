@@ -70,6 +70,10 @@ button {
   cursor: pointer;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 .app-shell {
   min-height: 100vh;
   background:
@@ -99,6 +103,7 @@ button {
 
 .input {
   min-height: 44px;
+  min-width: 0;
   width: 100%;
   border-radius: 8px;
   border: 1px solid var(--line);
@@ -139,6 +144,7 @@ button {
 .button-secondary,
 .button-danger {
   display: inline-flex;
+  min-width: 0;
   min-height: 42px;
   align-items: center;
   justify-content: center;
@@ -148,11 +154,40 @@ button {
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0;
+  text-align: center;
   transition:
     transform 160ms ease,
     border-color 160ms ease,
     background 160ms ease,
     box-shadow 160ms ease;
+}
+
+.button-primary > span,
+.button-secondary > span,
+.button-danger > span {
+  min-width: 0;
+}
+
+.icon-button {
+  display: inline-flex;
+  height: 42px;
+  width: 42px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 92%, var(--panel));
+  color: var(--ink);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.icon-button:hover {
+  border-color: color-mix(in srgb, var(--green) 38%, var(--line));
+  background: var(--paper);
+  transform: translateY(-1px);
 }
 
 .button-primary {
@@ -234,6 +269,35 @@ button {
   background: color-mix(in srgb, var(--green-soft) 82%, var(--paper));
   color: var(--green);
   box-shadow: inset 3px 0 0 var(--green), var(--shadow-soft);
+}
+
+.mobile-nav-link {
+  display: flex;
+  min-width: 58px;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-radius: 8px;
+  padding: 7px 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.mobile-nav-link span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-nav-link-active {
+  background: var(--green-soft);
+  color: var(--green);
 }
 
 .answer {
@@ -611,4 +675,57 @@ button:disabled {
   padding: 0 10px;
   font-size: 12px;
   font-weight: 800;
+}
+
+@media (max-width: 640px) {
+  main {
+    min-width: 0;
+  }
+
+  .surface {
+    box-shadow: var(--shadow-soft);
+  }
+
+  .button-primary,
+  .button-secondary,
+  .button-danger {
+    min-height: 40px;
+    padding: 0 13px;
+    font-size: 13px;
+  }
+
+  .answer {
+    min-height: 52px;
+    padding-inline: 10px;
+    line-height: 1.35;
+    white-space: normal;
+  }
+
+  .answer-action-grid {
+    position: sticky;
+    bottom: 74px;
+    z-index: 12;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--paper) 96%, transparent);
+    padding: 10px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(12px);
+  }
+
+  .word-card-body {
+    min-height: 0;
+    gap: 20px;
+    padding: 18px;
+  }
+
+  .memory-panel {
+    min-height: 220px;
+    padding: 18px;
+  }
+
+  .word-avatar {
+    width: min(100%, 150px);
+    font-size: 72px;
+  }
 }

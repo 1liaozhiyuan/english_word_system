@@ -7,35 +7,50 @@ import { Message } from '../components/Message';
 export function LoginPage() {
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [localMessage, setLocalMessage] = React.useState('');
   const { login, message } = useAuth();
   const navigate = useNavigate();
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (await login(email, password)) {
-      navigate('/dashboard');
+    if (!email.trim() || !password) {
+      setLocalMessage('请先填写邮箱和密码。');
+      return;
+    }
+    setLocalMessage('');
+    setIsSubmitting(true);
+    try {
+      if (await login(email.trim(), password)) {
+        navigate('/dashboard');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
   return (
     <AuthShell title="欢迎回来" subtitle="登录后继续你的单词学习进度">
-      <Message>{message}</Message>
+      <Message tone={localMessage ? 'warning' : message.includes('成功') || message.includes('退出') ? 'info' : 'error'}>
+        {localMessage || message}
+      </Message>
       <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
         <label className="text-sm font-bold">
           邮箱
-          <input className="input mt-2" value={email} onChange={(event) => setEmail(event.target.value)} />
+          <input className="input mt-2" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} />
         </label>
         <label className="text-sm font-bold">
           密码
           <input
             className="input mt-2"
             type="password"
+            autoComplete="current-password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />
         </label>
-        <button className="button-primary mt-2 w-full" type="submit">
-          登录
+        <button className="button-primary mt-2 w-full" disabled={isSubmitting} type="submit">
+          {isSubmitting ? '登录中...' : '登录'}
         </button>
       </form>
       <p className="mt-3 text-center text-sm" style={{ color: 'var(--muted)' }}>

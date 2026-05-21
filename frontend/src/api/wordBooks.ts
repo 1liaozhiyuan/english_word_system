@@ -5,6 +5,7 @@ import type {
   WordBook,
   WordBookDetail,
   WordBookImportResult,
+  WordBookImportPreview,
   WordBookPayload,
   WordBookProgress,
   WordProgress,
@@ -159,14 +160,14 @@ export async function updateWord(token: string, wordId: number, payload: Partial
 }
 
 export async function removeWordFromBook(token: string, wordBookId: number, wordId: number) {
-  const { data } = await api.delete<{ status: string }>(`/word-books/${wordBookId}/words/${wordId}`, {
+  const { data } = await api.delete<{ status: string; word_book_deleted: boolean }>(`/word-books/${wordBookId}/words/${wordId}`, {
     headers: getAuthHeaders(token),
   });
   return data;
 }
 
 export async function batchDeleteWords(token: string, wordBookId: number, wordIds: number[]) {
-  const { data } = await api.post<{ deleted: number }>(
+  const { data } = await api.post<{ deleted: number; word_book_deleted: boolean }>(
     `/word-books/${wordBookId}/words/batch-delete`,
     { word_ids: wordIds },
     { headers: getAuthHeaders(token) },
@@ -199,14 +200,26 @@ export async function selectWordBook(token: string, wordBookId: number) {
 
 export async function importWordBook(
   token: string,
-  payload: { title: string; description: string; file: File },
+  payload: { title: string; description: string; category: string; difficulty: string; file: File },
 ) {
   const formData = new FormData();
   formData.append('title', payload.title);
   formData.append('description', payload.description);
+  formData.append('category', payload.category);
+  formData.append('difficulty', payload.difficulty);
   formData.append('file', payload.file);
 
   const { data } = await api.post<WordBookImportResult>('/word-books/import', formData, {
+    headers: getAuthHeaders(token),
+  });
+  return data;
+}
+
+export async function previewWordBookImport(token: string, file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const { data } = await api.post<WordBookImportPreview>('/word-books/import/preview', formData, {
     headers: getAuthHeaders(token),
   });
   return data;

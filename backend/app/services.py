@@ -7,6 +7,7 @@ from sqlmodel import Session, func, select
 
 from app.core.security import generate_reset_token, hash_password, verify_password
 from app.models import (
+    FavoriteWord,
     ProgressStatus,
     ReviewLog,
     StudyMode,
@@ -37,6 +38,17 @@ def _clear_progress_for_book_words(
     for log in session.exec(log_query).all():
         log.word_book_id = None
         session.add(log)
+
+
+def _delete_word_book_if_empty(session: Session, book: WordBook) -> bool:
+    remaining_count = session.exec(
+        select(func.count()).select_from(WordBookItem).where(WordBookItem.word_book_id == book.id)
+    ).one()
+    if remaining_count > 0:
+        return False
+    _clear_progress_for_book_words(session, book.id)
+    session.delete(book)
+    return True
 
 
 def _merge_progress_into_target_book(
@@ -159,8 +171,14 @@ def list_word_books_paginated(
     keyword = query.strip()
     if keyword:
         pattern = f"%{keyword}%"
-        statement = statement.where((WordBook.title.ilike(pattern)) | (WordBook.description.ilike(pattern)))
-        count_statement = count_statement.where((WordBook.title.ilike(pattern)) | (WordBook.description.ilike(pattern)))
+        condition = (
+            (WordBook.title.ilike(pattern))
+            | (WordBook.description.ilike(pattern))
+            | (WordBook.category.ilike(pattern))
+            | (WordBook.difficulty.ilike(pattern))
+        )
+        statement = statement.where(condition)
+        count_statement = count_statement.where(condition)
 
     total = session.exec(count_statement).one()
     books = list(
@@ -177,6 +195,8 @@ def list_word_books_paginated(
                 "id": book.id,
                 "title": book.title,
                 "description": book.description,
+                "category": book.category,
+                "difficulty": book.difficulty,
                 "word_count": word_count,
             }
             for book, word_count in books
@@ -202,7 +222,13 @@ def list_word_book_progress(
         page_data = list_word_books_paginated(session, page, page_size, query)
         books = [
             (
-                WordBook(id=item["id"], title=item["title"], description=item["description"]),
+                WordBook(
+                    id=item["id"],
+                    title=item["title"],
+                    description=item["description"],
+                    category=item["category"],
+                    difficulty=item["difficulty"],
+                ),
                 item["word_count"],
             )
             for item in page_data["items"]
@@ -233,19 +259,22 @@ def list_word_book_progress(
         mastered_count = sum(1 for item in progress_items if item.status == ProgressStatus.mastered)
         mistake_count = sum(1 for item in progress_items if item.wrong_count > 0)
         learning_count = max(0, added_count - mastered_count)
+        completion_rate = round((studied_count / word_count) * 100) if word_count else 0
 
         results.append(
             {
                 "id": book.id,
                 "title": book.title,
                 "description": book.description,
+                "category": book.category,
+                "difficulty": book.difficulty,
                 "word_count": word_count,
                 "added_count": added_count,
                 "studied_count": studied_count,
                 "learning_count": learning_count,
                 "mastered_count": mastered_count,
                 "mistake_count": mistake_count,
-                "completion_rate": round((mastered_count / word_count) * 100) if word_count else 0,
+                "completion_rate": completion_rate,
             }
         )
 
@@ -285,6 +314,10 @@ def update_word_book(session: Session, word_book_id: int, data: dict[str, str | 
         book.title = title
     if "description" in data:
         book.description = (data.get("description") or "").strip()
+    if "category" in data:
+        book.category = (data.get("category") or "").strip() or "通用"
+    if "difficulty" in data:
+        book.difficulty = (data.get("difficulty") or "").strip() or "标准"
 
     session.add(book)
     session.commit()
@@ -403,6 +436,7 @@ def list_word_book_word_progress(
                 "last_reviewed_at": progress.last_reviewed_at if progress else None,
                 "next_review_at": progress.next_review_at if progress else None,
                 "is_leech": progress.is_leech if progress else False,
+                "is_favorite": is_favorite_word(session, user, word.id),
             }
         )
     return results
@@ -519,6 +553,7 @@ def list_word_book_word_progress_paginated(
             "last_reviewed_at": progress.last_reviewed_at if progress else None,
             "next_review_at": progress.next_review_at if progress else None,
             "is_leech": progress.is_leech if progress else False,
+            "is_favorite": is_favorite_word(session, user, word.id),
         }
         for word, progress in rows
     ]
@@ -638,8 +673,9 @@ def update_word(session: Session, word_id: int, data: dict[str, str | None]) -> 
     return word
 
 
-def remove_word_from_book(session: Session, word_book_id: int, word_id: int) -> None:
-    if not session.get(WordBook, word_book_id):
+def remove_word_from_book(session: Session, word_book_id: int, word_id: int) -> bool:
+    book = session.get(WordBook, word_book_id)
+    if not book:
         raise HTTPException(status_code=404, detail="Word book not found")
 
     item = session.exec(
@@ -653,7 +689,10 @@ def remove_word_from_book(session: Session, word_book_id: int, word_id: int) -> 
 
     _clear_progress_for_book_words(session, word_book_id, [word_id])
     session.delete(item)
+    session.flush()
+    word_book_deleted = _delete_word_book_if_empty(session, book)
     session.commit()
+    return word_book_deleted
 
 
 def batch_delete_word_books(session: Session, word_book_ids: list[int]) -> int:
@@ -674,8 +713,9 @@ def batch_delete_word_books(session: Session, word_book_ids: list[int]) -> int:
     return deleted
 
 
-def batch_delete_words(session: Session, word_book_id: int, word_ids: list[int]) -> int:
-    if not session.get(WordBook, word_book_id):
+def batch_delete_words(session: Session, word_book_id: int, word_ids: list[int]) -> tuple[int, bool]:
+    book = session.get(WordBook, word_book_id)
+    if not book:
         raise HTTPException(status_code=404, detail="Word book not found")
 
     items = session.exec(
@@ -690,8 +730,10 @@ def batch_delete_words(session: Session, word_book_id: int, word_ids: list[int])
         count += 1
     if count:
         _clear_progress_for_book_words(session, word_book_id, [item.word_id for item in items])
+        session.flush()
+    word_book_deleted = _delete_word_book_if_empty(session, book) if count else False
     session.commit()
-    return count
+    return count, word_book_deleted
 
 
 def batch_move_words(
@@ -748,15 +790,7 @@ def batch_move_words(
     return len(source_items)
 
 
-def import_word_book_from_csv(
-    session: Session,
-    title: str,
-    description: str,
-    content: bytes,
-) -> tuple[WordBook, int]:
-    if not title.strip():
-        raise HTTPException(status_code=400, detail="Word book title is required")
-
+def parse_word_book_csv(session: Session, content: bytes) -> dict[str, object]:
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -783,45 +817,128 @@ def import_word_book_from_csv(
         return value.strip() if value else None
 
     rows = []
+    errors = []
+    seen_words: set[str] = set()
+    total_rows = 0
     for line_number, row in enumerate(reader, start=2):
+        total_rows += 1
         word_text = get_value(row, "word")
         meaning = get_value(row, "meaning")
         if not word_text and not meaning:
             continue
         if not word_text or not meaning:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Row {line_number} must include both word and meaning",
+            errors.append(
+                {
+                    "row_number": line_number,
+                    "message": "word and meaning are both required",
+                }
             )
+            continue
+        normalized_word = word_text.strip().lower()
+        duplicate_in_file = normalized_word in seen_words
+        seen_words.add(normalized_word)
         rows.append(
             {
-                "text": word_text,
+                "row_number": line_number,
+                "word": word_text,
                 "meaning": meaning,
                 "phonetic": get_value(row, "phonetic"),
                 "part_of_speech": get_value(row, "part_of_speech"),
                 "example_sentence": get_value(row, "example_sentence"),
                 "example_translation": get_value(row, "example_translation"),
                 "note": get_value(row, "note"),
+                "duplicate_in_file": duplicate_in_file,
             }
         )
 
+    existing_words: set[str] = set()
+    if rows:
+        word_texts = [row["word"] for row in rows]
+        existing_words = {
+            item.lower()
+            for item in session.exec(select(Word.text).where(Word.text.in_(word_texts))).all()
+        }
+        lower_word_texts = [word.lower() for word in word_texts]
+        existing_words.update(
+            item.lower()
+            for item in session.exec(select(Word.text).where(func.lower(Word.text).in_(lower_word_texts))).all()
+        )
+
+    for row in rows:
+        row["duplicate_in_database"] = row["word"].lower() in existing_words
+
+    return {
+        "total_rows": total_rows,
+        "valid_count": len(rows),
+        "error_count": len(errors),
+        "duplicate_in_file_count": sum(1 for row in rows if row["duplicate_in_file"]),
+        "duplicate_in_database_count": sum(1 for row in rows if row["duplicate_in_database"]),
+        "words": rows,
+        "errors": errors,
+    }
+
+
+def import_word_book_from_csv(
+    session: Session,
+    title: str,
+    description: str,
+    content: bytes,
+    category: str = "通用",
+    difficulty: str = "标准",
+) -> tuple[WordBook, int, int]:
+    if not title.strip():
+        raise HTTPException(status_code=400, detail="Word book title is required")
+
+    preview = parse_word_book_csv(session, content)
+    rows = preview["words"]
     if not rows:
         raise HTTPException(status_code=400, detail="CSV file has no valid words")
+    if preview["error_count"]:
+        raise HTTPException(status_code=400, detail="CSV file contains invalid rows")
 
-    book = WordBook(title=title.strip(), description=description.strip())
+    book = WordBook(
+        title=title.strip(),
+        description=description.strip(),
+        category=category.strip() or "通用",
+        difficulty=difficulty.strip() or "标准",
+    )
     session.add(book)
     session.commit()
     session.refresh(book)
 
+    lower_words = [row["word"].lower() for row in rows]
+    existing_by_text = {
+        word.text.lower(): word
+        for word in session.exec(select(Word).where(func.lower(Word.text).in_(lower_words))).all()
+    }
+
+    imported_count = 0
+    skipped_count = 0
     for row in rows:
-        word = Word(**row)
-        session.add(word)
-        session.commit()
-        session.refresh(word)
+        if row["duplicate_in_file"]:
+            skipped_count += 1
+            continue
+
+        word = existing_by_text.get(row["word"].lower())
+        if word is None:
+            word = Word(
+                text=row["word"],
+                meaning=row["meaning"],
+                phonetic=row["phonetic"],
+                part_of_speech=row["part_of_speech"],
+                example_sentence=row["example_sentence"],
+                example_translation=row["example_translation"],
+                note=row["note"],
+            )
+            session.add(word)
+            session.commit()
+            session.refresh(word)
+            existing_by_text[word.text.lower()] = word
         session.add(WordBookItem(word_book_id=book.id, word_id=word.id))
+        imported_count += 1
 
     session.commit()
-    return book, len(rows)
+    return book, imported_count, skipped_count
 
 
 def select_word_book(session: Session, user: User, word_book_id: int) -> int:
@@ -876,6 +993,10 @@ def update_user_settings(
     default_study_mode: StudyMode | None = None,
     auto_play_word: bool | None = None,
     auto_play_example: bool | None = None,
+    auto_reveal_after_audio: bool | None = None,
+    auto_advance: bool | None = None,
+    answer_delay_ms: int | None = None,
+    word_book_page_size: int | None = None,
 ) -> UserSettings:
     settings = get_or_create_user_settings(session, user)
     if daily_new_limit is not None:
@@ -888,6 +1009,14 @@ def update_user_settings(
         settings.auto_play_word = auto_play_word
     if auto_play_example is not None:
         settings.auto_play_example = auto_play_example
+    if auto_reveal_after_audio is not None:
+        settings.auto_reveal_after_audio = auto_reveal_after_audio
+    if auto_advance is not None:
+        settings.auto_advance = auto_advance
+    if answer_delay_ms is not None:
+        settings.answer_delay_ms = max(300, min(3000, answer_delay_ms))
+    if word_book_page_size is not None:
+        settings.word_book_page_size = max(10, min(100, word_book_page_size))
     settings.updated_at = datetime.utcnow()
     session.add(settings)
     session.commit()
@@ -939,6 +1068,135 @@ def get_due_study_items(
     session: Session, user: User, limit: int = 10
 ) -> list[UserWordProgress]:
     return get_due_new_items(session, user, limit)
+
+
+def is_favorite_word(session: Session, user: User, word_id: int) -> bool:
+    return session.exec(
+        select(FavoriteWord.id).where(
+            FavoriteWord.user_id == user.id,
+            FavoriteWord.word_id == word_id,
+        )
+    ).first() is not None
+
+
+def _get_default_word_book_id(session: Session, word_id: int) -> int | None:
+    return session.exec(
+        select(WordBookItem.word_book_id)
+        .where(WordBookItem.word_id == word_id)
+        .order_by(WordBookItem.word_book_id)
+    ).first()
+
+
+def ensure_user_word_progress(
+    session: Session,
+    user: User,
+    word_id: int,
+    word_book_id: int | None = None,
+) -> UserWordProgress:
+    word = session.get(Word, word_id)
+    if not word:
+        raise HTTPException(status_code=404, detail="Word not found")
+
+    progress = session.exec(
+        select(UserWordProgress).where(
+            UserWordProgress.user_id == user.id,
+            UserWordProgress.word_id == word_id,
+        )
+    ).first()
+    if progress:
+        return progress
+
+    progress = UserWordProgress(
+        user_id=user.id,
+        word_id=word_id,
+        word_book_id=word_book_id or _get_default_word_book_id(session, word_id),
+    )
+    session.add(progress)
+    session.commit()
+    session.refresh(progress)
+    return progress
+
+
+def favorite_word(session: Session, user: User, word_id: int) -> bool:
+    ensure_user_word_progress(session, user, word_id)
+    existing = session.exec(
+        select(FavoriteWord).where(
+            FavoriteWord.user_id == user.id,
+            FavoriteWord.word_id == word_id,
+        )
+    ).first()
+    if existing:
+        return True
+
+    session.add(FavoriteWord(user_id=user.id, word_id=word_id))
+    session.commit()
+    return True
+
+
+def unfavorite_word(session: Session, user: User, word_id: int) -> bool:
+    favorite = session.exec(
+        select(FavoriteWord).where(
+            FavoriteWord.user_id == user.id,
+            FavoriteWord.word_id == word_id,
+        )
+    ).first()
+    if favorite:
+        session.delete(favorite)
+        session.commit()
+    return False
+
+
+def get_favorite_words_paginated(
+    session: Session,
+    user: User,
+    page: int = 1,
+    page_size: int = 20,
+    query: str = "",
+) -> dict[str, object]:
+    statement = (
+        select(FavoriteWord)
+        .join(Word, Word.id == FavoriteWord.word_id)
+        .where(FavoriteWord.user_id == user.id)
+    )
+    count_statement = (
+        select(func.count())
+        .select_from(FavoriteWord)
+        .join(Word, Word.id == FavoriteWord.word_id)
+        .where(FavoriteWord.user_id == user.id)
+    )
+
+    keyword = query.strip()
+    if keyword:
+        pattern = f"%{keyword}%"
+        condition = (
+            (Word.text.ilike(pattern))
+            | (Word.meaning.ilike(pattern))
+            | (Word.part_of_speech.ilike(pattern))
+            | (Word.example_sentence.ilike(pattern))
+        )
+        statement = statement.where(condition)
+        count_statement = count_statement.where(condition)
+
+    total = session.exec(count_statement).one()
+    items = list(
+        session.exec(
+            statement
+            .order_by(FavoriteWord.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+    )
+    progress_items = [
+        ensure_user_word_progress(session, user, item.word_id)
+        for item in items
+    ]
+    return {
+        "items": progress_items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+    }
 
 
 def answer_word(
@@ -1083,6 +1341,47 @@ def schedule_mistake_practice(
 
     progress.status = ProgressStatus.learning
     progress.next_review_at = datetime.utcnow()
+    session.add(progress)
+    session.commit()
+    session.refresh(progress)
+    return progress
+
+
+def schedule_mistake_practice_batch(
+    session: Session, user: User, word_ids: list[int]
+) -> int:
+    progresses = session.exec(
+        select(UserWordProgress).where(
+            UserWordProgress.user_id == user.id,
+            UserWordProgress.word_id.in_(word_ids),
+            UserWordProgress.wrong_count > 0,
+        )
+    ).all()
+    now = datetime.utcnow()
+    for progress in progresses:
+        progress.status = ProgressStatus.learning
+        progress.next_review_at = now
+        session.add(progress)
+    session.commit()
+    return len(progresses)
+
+
+def resolve_mistake(session: Session, user: User, word_id: int) -> UserWordProgress:
+    progress = session.exec(
+        select(UserWordProgress).where(
+            UserWordProgress.user_id == user.id,
+            UserWordProgress.word_id == word_id,
+            UserWordProgress.wrong_count > 0,
+        )
+    ).first()
+    if not progress:
+        raise HTTPException(status_code=404, detail="Mistake word not found")
+
+    progress.wrong_count = 0
+    progress.is_leech = False
+    progress.mastery_level = max(progress.mastery_level, 2)
+    if progress.status == ProgressStatus.learning:
+        progress.status = ProgressStatus.reviewing
     session.add(progress)
     session.commit()
     session.refresh(progress)
@@ -1257,6 +1556,8 @@ def get_streak_days(session: Session, user: User) -> int:
 def get_stats(session: Session, user: User) -> dict[str, int | list[dict[str, int | str]]]:
     now = datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = now - timedelta(days=6)
+    settings = get_or_create_user_settings(session, user)
     progress = list(
         session.exec(select(UserWordProgress).where(UserWordProgress.user_id == user.id)).all()
     )
@@ -1275,28 +1576,79 @@ def get_stats(session: Session, user: User) -> dict[str, int | list[dict[str, in
             ReviewLog.is_correct == True,  # noqa: E712
         )
     ).one()
-    due_new = sum(
+    weekly_reviews = session.exec(
+        select(func.count(ReviewLog.id)).where(
+            ReviewLog.user_id == user.id,
+            ReviewLog.created_at >= week_start,
+        )
+    ).one()
+    weekly_correct = session.exec(
+        select(func.count(ReviewLog.id)).where(
+            ReviewLog.user_id == user.id,
+            ReviewLog.created_at >= week_start,
+            ReviewLog.is_correct == True,  # noqa: E712
+        )
+    ).one()
+    available_new = sum(
         1
         for item in progress
         if item.status == ProgressStatus.new and item.next_review_at <= now
     )
-    due_review = sum(
+    available_review = sum(
         1
         for item in progress
         if item.status != ProgressStatus.new and item.next_review_at <= now
     )
+    reviewed_word_ids_today = set(
+        session.exec(
+            select(ReviewLog.word_id).where(
+                ReviewLog.user_id == user.id,
+                ReviewLog.created_at >= today_start,
+            )
+        ).all()
+    )
+    previously_reviewed_word_ids: set[int] = set()
+    if reviewed_word_ids_today:
+        previously_reviewed_word_ids = set(
+            session.exec(
+                select(ReviewLog.word_id).where(
+                    ReviewLog.user_id == user.id,
+                    ReviewLog.word_id.in_(reviewed_word_ids_today),
+                    ReviewLog.created_at < today_start,
+                )
+            ).all()
+        )
+    new_completed_today = len(reviewed_word_ids_today - previously_reviewed_word_ids)
+    review_completed_today = len(reviewed_word_ids_today & previously_reviewed_word_ids)
+    due_new = min(available_new, max(0, settings.daily_new_limit - new_completed_today))
+    due_review = min(available_review, max(0, settings.daily_review_limit - review_completed_today))
+    mastered = sum(1 for item in progress if item.status == ProgressStatus.mastered)
+    monthly_activity = get_activity_summary(session, user, 30)
     return {
         "total_learning": len(progress),
-        "mastered": sum(1 for item in progress if item.status == ProgressStatus.mastered),
+        "mastered": mastered,
+        "mastered_rate": round((mastered / len(progress)) * 100) if progress else 0,
         "mistakes": sum(1 for item in progress if item.wrong_count > 0),
         "leeches": sum(1 for item in progress if item.is_leech),
         "due_today": due_new + due_review,
         "due_new": due_new,
         "due_review": due_review,
+        "available_new": available_new,
+        "available_review": available_review,
+        "daily_new_limit": settings.daily_new_limit,
+        "daily_review_limit": settings.daily_review_limit,
+        "new_completed_today": new_completed_today,
+        "review_completed_today": review_completed_today,
         "completed_today": completed_today,
+        "total_reviews": total_reviews,
+        "correct_reviews": correct_reviews,
         "correct_rate": round((correct_reviews / total_reviews) * 100) if total_reviews else 0,
+        "weekly_reviews": weekly_reviews,
+        "weekly_correct_rate": round((weekly_correct / weekly_reviews) * 100) if weekly_reviews else 0,
+        "active_days_30": sum(1 for item in monthly_activity if item["reviews"] > 0),
         "streak_days": get_streak_days(session, user),
         "activity": get_activity_summary(session, user),
+        "monthly_activity": monthly_activity,
     }
 
 
@@ -1366,7 +1718,12 @@ def seed_demo_data(session: Session) -> None:
         ("efficient", "/ɪˈfɪʃnt/", "高效的", "adj.", "This method is efficient.", "这个方法很高效。"),
     ]
 
-    book = WordBook(title="Starter Vocabulary", description="A small starter word book.")
+    book = WordBook(
+        title="Starter Vocabulary",
+        description="A small starter word book.",
+        category="通用",
+        difficulty="入门",
+    )
     session.add(book)
     session.commit()
     session.refresh(book)

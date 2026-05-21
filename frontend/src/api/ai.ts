@@ -5,6 +5,7 @@ type StreamHandler = (content: string) => void;
 type StreamOptions = { signal?: AbortSignal };
 
 const aiMemoryCache = new Map<string, string>();
+const AI_RESPONSE_TIMEOUT_MS = 45000;
 
 export async function explainWord(token: string, word: Word, onUpdate?: StreamHandler, options?: StreamOptions) {
   return streamAI({
@@ -62,7 +63,7 @@ async function streamAI({
   cacheKey,
   body,
   onUpdate,
-  signal,
+  signal: externalSignal,
 }: {
   token: string;
   path: string;
@@ -77,16 +78,29 @@ async function streamAI({
     onUpdate?.(cached);
     return cached;
   }
+  const timeoutController = new AbortController();
+  const timeoutId = window.setTimeout(() => timeoutController.abort(), AI_RESPONSE_TIMEOUT_MS);
+  const signal = combineSignals([externalSignal, timeoutController.signal]);
 
-  const response = await fetch(`${api.defaults.baseURL}${path}`, {
-    method: 'POST',
-    headers: {
-      ...getAuthHeaders(token),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${api.defaults.baseURL}${path}`, {
+      method: 'POST',
+      headers: {
+        ...getAuthHeaders(token),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(externalSignal?.aborted ? 'AI 生成已停止。' : 'AI 生成超时，请稍后重试。');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     throw new Error(await getStreamErrorMessage(response));
@@ -111,6 +125,17 @@ async function streamAI({
   aiMemoryCache.set(scopedCacheKey, content);
   onUpdate?.(content);
   return content;
+}
+
+function combineSignals(signals: (AbortSignal | undefined)[]) {
+  const activeSignals = signals.filter(Boolean) as AbortSignal[];
+  if (activeSignals.length === 1) return activeSignals[0];
+  const controller = new AbortController();
+  activeSignals.forEach((signal) => {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', () => controller.abort(), { once: true });
+  });
+  return controller.signal;
 }
 
 async function getStreamErrorMessage(response: Response) {

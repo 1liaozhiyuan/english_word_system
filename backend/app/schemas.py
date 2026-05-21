@@ -44,6 +44,10 @@ class UserSettingsRead(BaseModel):
     default_study_mode: StudyMode = StudyMode.en_to_cn
     auto_play_word: bool = True
     auto_play_example: bool = True
+    auto_reveal_after_audio: bool = False
+    auto_advance: bool = True
+    answer_delay_ms: int = 800
+    word_book_page_size: int = 30
 
 
 class UserSettingsUpdate(BaseModel):
@@ -52,6 +56,10 @@ class UserSettingsUpdate(BaseModel):
     default_study_mode: StudyMode | None = None
     auto_play_word: bool | None = None
     auto_play_example: bool | None = None
+    auto_reveal_after_audio: bool | None = None
+    auto_advance: bool | None = None
+    answer_delay_ms: int | None = Field(default=None, ge=300, le=3000)
+    word_book_page_size: int | None = Field(default=None, ge=10, le=100)
 
 
 class WordRead(BaseModel):
@@ -93,6 +101,8 @@ class WordBookRead(BaseModel):
     id: int
     title: str
     description: str
+    category: str = "通用"
+    difficulty: str = "标准"
     word_count: int
 
 
@@ -108,6 +118,8 @@ class WordBookProgressRead(WordBookRead):
 class WordBookUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1)
     description: str | None = None
+    category: str | None = None
+    difficulty: str | None = None
 
 
 class WordBookDetail(WordBookRead):
@@ -125,12 +137,42 @@ class WordProgressRead(BaseModel):
     last_reviewed_at: datetime | None
     next_review_at: datetime | None
     is_leech: bool = False
+    is_favorite: bool = False
 
 
 class WordBookImportResult(BaseModel):
     id: int
     title: str
     imported_count: int
+    skipped_count: int = 0
+
+
+class CSVPreviewWord(BaseModel):
+    row_number: int
+    word: str
+    meaning: str
+    phonetic: str | None = None
+    part_of_speech: str | None = None
+    example_sentence: str | None = None
+    example_translation: str | None = None
+    note: str | None = None
+    duplicate_in_file: bool = False
+    duplicate_in_database: bool = False
+
+
+class CSVPreviewError(BaseModel):
+    row_number: int
+    message: str
+
+
+class WordBookImportPreview(BaseModel):
+    total_rows: int
+    valid_count: int
+    error_count: int
+    duplicate_in_file_count: int
+    duplicate_in_database_count: int
+    words: list[CSVPreviewWord]
+    errors: list[CSVPreviewError]
 
 
 class StudyItem(BaseModel):
@@ -140,7 +182,12 @@ class StudyItem(BaseModel):
     mastery_level: int
     easiness_factor: float = 2.5
     interval_days: float = 0
+    correct_count: int = 0
+    wrong_count: int = 0
+    last_reviewed_at: datetime | None = None
+    next_review_at: datetime | None = None
     is_leech: bool = False
+    is_favorite: bool = False
     word: WordRead
 
 
@@ -181,15 +228,28 @@ class DailyActivity(BaseModel):
 class StatsOverview(BaseModel):
     total_learning: int
     mastered: int
+    mastered_rate: int = 0
     mistakes: int
     leeches: int = 0
     due_today: int
     due_new: int
     due_review: int
+    available_new: int = 0
+    available_review: int = 0
+    daily_new_limit: int = 10
+    daily_review_limit: int = 20
+    new_completed_today: int = 0
+    review_completed_today: int = 0
     completed_today: int
+    total_reviews: int = 0
+    correct_reviews: int = 0
     correct_rate: int
+    weekly_reviews: int = 0
+    weekly_correct_rate: int = 0
+    active_days_30: int = 0
     streak_days: int
     activity: list[DailyActivity]
+    monthly_activity: list[DailyActivity] = []
 
 
 class PaginatedResponse(BaseModel):

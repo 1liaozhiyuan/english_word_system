@@ -16,6 +16,10 @@ export async function updateSettings(
     default_study_mode?: StudyMode;
     auto_play_word?: boolean;
     auto_play_example?: boolean;
+    auto_reveal_after_audio?: boolean;
+    auto_advance?: boolean;
+    answer_delay_ms?: number;
+    word_book_page_size?: number;
   },
 ) {
   const { data } = await api.patch<UserSettings>('/settings', payload, {

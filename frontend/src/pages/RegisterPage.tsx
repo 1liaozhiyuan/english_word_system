@@ -7,24 +7,40 @@ import { AuthShell } from './LoginPage';
 export function RegisterPage() {
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [localMessage, setLocalMessage] = React.useState('');
   const { register, message } = useAuth();
   const navigate = useNavigate();
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (await register(email, password)) {
-      navigate('/dashboard');
+    if (!email.trim() || password.length < 6) {
+      setLocalMessage('请填写有效邮箱，并使用至少 6 位密码。');
+      return;
+    }
+    setLocalMessage('');
+    setIsSubmitting(true);
+    try {
+      if (await register(email.trim(), password)) {
+        navigate('/dashboard');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
   return (
     <AuthShell title="创建账号" subtitle="注册后系统会开始记录你的背词进度">
-      <Message>{message}</Message>
+      <Message tone={localMessage ? 'warning' : message.includes('成功') ? 'success' : 'error'}>
+        {localMessage || message}
+      </Message>
       <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
         <label className="text-sm font-bold">
           邮箱
           <input
             className="input mt-2"
+            type="email"
+            autoComplete="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             placeholder="you@example.com"
@@ -35,13 +51,14 @@ export function RegisterPage() {
           <input
             className="input mt-2"
             type="password"
+            autoComplete="new-password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             placeholder="至少 6 位"
           />
         </label>
-        <button className="button-primary mt-2 w-full" type="submit">
-          注册
+        <button className="button-primary mt-2 w-full" disabled={isSubmitting} type="submit">
+          {isSubmitting ? '注册中...' : '注册'}
         </button>
       </form>
       <p className="mt-5 text-center text-sm text-[#6b6a62]">

@@ -4,12 +4,12 @@ import { getErrorMessage } from '../api/client';
 import { getStatsOverview } from '../api/stats';
 import { exportUserData, getStudyHistoryPaginated } from '../api/study';
 import { useAuth } from '../auth/AuthContext';
+import { ListSkeleton } from '../components/ListSkeleton';
+import { LoadingState } from '../components/LoadingState';
 import { Message } from '../components/Message';
 import { PageHeader } from '../components/PageHeader';
 import { StatCard } from '../components/StatCard';
-import { LoadingState } from '../components/LoadingState';
-import { ListSkeleton } from '../components/ListSkeleton';
-import type { ReviewLogItem, Stats } from '../types';
+import type { DailyActivity, ReviewLogItem, Stats } from '../types';
 
 const qualityText: Record<number, string> = {
   0: '不认识',
@@ -44,7 +44,7 @@ export function StatsPage() {
     try {
       const result = await getStudyHistoryPaginated(token, nextPage, HISTORY_PAGE_SIZE, keyword.trim());
       setHistory((current) => {
-        const next = append ? [...current, ...result.items] : result.items;
+        const next = append ? mergeHistory(current, result.items) : result.items;
         setSelectedLog((currentLog) => (append ? currentLog ?? next[0] ?? null : next[0] ?? null));
         return next;
       });
@@ -89,11 +89,7 @@ export function StatsPage() {
     await loadHistory(historyPage + 1, true).catch((error) => setMessage(getErrorMessage(error)));
   }
 
-  const maxReviews = Math.max(1, ...(stats?.activity.map((item) => item.reviews) ?? [1]));
   const diagnosis = stats ? getLearningDiagnosis(stats) : null;
-  const weeklyTotal = stats?.activity.reduce((sum, item) => sum + item.reviews, 0) ?? 0;
-  const weeklyCorrect = stats?.activity.reduce((sum, item) => sum + item.correct, 0) ?? 0;
-  const activeDays = stats?.activity.filter((item) => item.reviews > 0).length ?? 0;
 
   return (
     <>
@@ -101,7 +97,7 @@ export function StatsPage() {
         title="学习数据"
         description="这里不只展示数字，也帮助你判断当前学习节奏是否健康。历史记录会按需加载。"
         action={
-          <button className="button-secondary" onClick={handleExportData}>
+          <button className="button-secondary" onClick={handleExportData} type="button">
             <Download size={16} />
             导出学习数据
           </button>
@@ -116,18 +112,18 @@ export function StatsPage() {
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <StatCard label="学习中" value={stats.total_learning} />
             <StatCard label="已掌握" value={stats.mastered} />
-            <StatCard label="正确率" value={stats.correct_rate} suffix="%" />
+            <StatCard label="掌握率" value={stats.mastered_rate} suffix="%" />
+            <StatCard label="本周正确率" value={stats.weekly_correct_rate} suffix="%" />
             <StatCard label="连续学习" value={stats.streak_days} suffix="天" />
-            <StatCard label="重点难词" value={stats.leeches} />
           </section>
 
           <section className="mt-5 grid gap-5 lg:grid-cols-2">
-            <div className="surface rounded-lg p-6">
+            <div className="surface rounded-lg p-4 sm:p-6">
               <div className="flex items-center gap-2 text-sm font-bold" style={{ color: diagnosis.color }}>
                 {diagnosis.icon}
                 学习健康度
               </div>
-              <h3 className="mt-3 text-3xl font-semibold tracking-normal" style={{ color: 'var(--ink)' }}>
+              <h3 className="mt-3 text-2xl font-semibold tracking-normal sm:text-3xl" style={{ color: 'var(--ink)' }}>
                 {diagnosis.title}
               </h3>
               <p className="mt-3 leading-7" style={{ color: 'var(--muted)' }}>
@@ -136,61 +132,62 @@ export function StatsPage() {
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <InsightMetric label="待处理" value={stats.due_today} />
                 <InsightMetric label="错词" value={stats.mistakes} />
-                <InsightMetric label="本周练习" value={weeklyTotal} />
+                <InsightMetric label="本周练习" value={stats.weekly_reviews} />
               </div>
             </div>
 
-            <div className="surface rounded-lg p-6">
+            <div className="surface rounded-lg p-4 sm:p-6">
               <div className="flex items-center gap-2 text-sm font-bold" style={{ color: 'var(--green)' }}>
                 <BarChart3 size={18} />
                 本周节奏
               </div>
               <p className="mt-3 leading-7" style={{ color: 'var(--muted)' }}>
-                过去 7 天中，你有 {activeDays} 天发生学习记录，共完成 {weeklyTotal} 次练习，
-                其中 {weeklyCorrect} 次为有效正确。
+                过去 7 天共完成 {stats.weekly_reviews} 次练习，近期正确率为 {stats.weekly_correct_rate}%。
               </p>
-              <div className="mt-5 grid h-52 grid-cols-7 items-end gap-3">
-                {stats.activity.map((item) => {
-                  const accuracy = item.reviews ? Math.round((item.correct / item.reviews) * 100) : 0;
-                  return (
-                    <div className="flex h-full flex-col justify-end gap-2" key={item.date}>
-                      <div
-                        className="rounded-t-lg bg-[#355e3b] dark:bg-[#7fb87a]"
-                        style={{ height: `${Math.max(8, (item.reviews / maxReviews) * 100)}%` }}
-                        title={`${item.date}: ${item.reviews} 次，正确率 ${accuracy}%`}
-                      />
-                      <div className="text-center text-xs font-semibold" style={{ color: 'var(--muted)' }}>
-                        {item.date.slice(5)}
-                      </div>
-                    </div>
-                  );
-                })}
+              <WeeklyBars activity={stats.activity} />
+            </div>
+          </section>
+
+          <section className="surface mt-5 rounded-lg p-4 sm:p-6">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+              <div>
+                <h3 className="text-xl font-semibold" style={{ color: 'var(--ink)' }}>30 天学习热力</h3>
+                <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
+                  最近 30 天活跃 {stats.active_days_30} 天，总计 {stats.total_reviews} 次练习。
+                </p>
               </div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>
+                总正确率 {stats.correct_rate}%
+              </div>
+            </div>
+            <div className="mt-5">
+              <ActivityHeatmap activity={stats.monthly_activity} />
             </div>
           </section>
 
           <section className="mt-5 grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
-            <div className="surface rounded-lg p-6">
+            <div className="surface rounded-lg p-4 sm:p-6">
               <h3 className="text-xl font-semibold" style={{ color: 'var(--ink)' }}>任务压力</h3>
               <div className="mt-5 grid gap-3">
                 <MetricRow label="待学新词" value={stats.due_new} />
                 <MetricRow label="待复习" value={stats.due_review} />
                 <MetricRow label="今日已完成" value={stats.completed_today} />
+                <MetricRow label="重点难词" value={stats.leeches} />
               </div>
               <div className="mt-5 rounded-lg p-4 text-sm leading-7" style={{ background: 'var(--panel)', color: 'var(--muted)' }}>
                 {diagnosis.advice}
               </div>
             </div>
 
-            <div className="surface rounded-lg p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="surface rounded-lg p-4 sm:p-6">
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(220px,320px)] lg:items-start">
                 <div>
                   <h3 className="text-xl font-semibold" style={{ color: 'var(--ink)' }}>最近学习记录</h3>
                   <span className="text-xs font-bold" style={{ color: 'var(--muted)' }}>
                     已加载 {history.length} / {historyTotal}，点击单词查看详情
                   </span>
                 </div>
-                <label className="relative block min-w-[220px] max-w-sm flex-1">
+                <label className="relative block min-w-0 max-w-sm lg:justify-self-end">
                   <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" size={16} style={{ color: 'var(--muted)' }} />
                   <input
                     className="input pl-9"
@@ -209,7 +206,7 @@ export function StatsPage() {
                 )}
                 {history.map((item) => (
                   <button
-                    className="flex w-full flex-wrap items-center justify-between gap-3 rounded-lg border p-4 text-left transition hover:-translate-y-0.5"
+                    className="grid w-full gap-3 rounded-lg border p-4 text-left transition hover:-translate-y-0.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                     style={{
                       borderColor: selectedLog?.id === item.id ? 'var(--green)' : 'var(--line)',
                       background: selectedLog?.id === item.id ? 'var(--green-soft)' : 'var(--paper)',
@@ -218,8 +215,8 @@ export function StatsPage() {
                     onClick={() => setSelectedLog(item)}
                     type="button"
                   >
-                    <div>
-                      <div className="font-semibold" style={{ color: 'var(--ink)' }}>{item.word_text}</div>
+                    <div className="min-w-0">
+                      <div className="break-words font-semibold" style={{ color: 'var(--ink)' }}>{item.word_text}</div>
                       <div className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
                         {new Date(item.created_at).toLocaleString()} · {studyModeLabel[item.study_mode] ?? item.study_mode}
                       </div>
@@ -237,7 +234,7 @@ export function StatsPage() {
               </div>
               {history.length > 0 && historyPage < historyTotalPages && (
                 <div className="mt-4 flex justify-center">
-                  <button className="button-secondary" disabled={isHistoryLoading} onClick={handleLoadMoreHistory}>
+                  <button className="button-secondary" disabled={isHistoryLoading} onClick={handleLoadMoreHistory} type="button">
                     {isHistoryLoading ? '加载中...' : `加载更多（${historyPage}/${historyTotalPages}）`}
                   </button>
                 </div>
@@ -252,15 +249,69 @@ export function StatsPage() {
   );
 }
 
+function WeeklyBars({ activity }: { activity: DailyActivity[] }) {
+  const maxReviews = Math.max(1, ...activity.map((item) => item.reviews));
+  return (
+    <div className="mt-5 grid h-44 grid-cols-7 items-end gap-2 sm:h-52 sm:gap-3">
+      {activity.map((item) => {
+        const accuracy = item.reviews ? Math.round((item.correct / item.reviews) * 100) : 0;
+        return (
+          <div className="flex h-full flex-col justify-end gap-2" key={item.date}>
+            <div
+              className="rounded-t-lg bg-[#355e3b] dark:bg-[#7fb87a]"
+              style={{ height: `${Math.max(8, (item.reviews / maxReviews) * 100)}%` }}
+              title={`${item.date}: ${item.reviews} 次，正确率 ${accuracy}%`}
+            />
+            <div className="text-center text-xs font-semibold" style={{ color: 'var(--muted)' }}>
+              {item.date.slice(5)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ActivityHeatmap({ activity }: { activity: DailyActivity[] }) {
+  const maxReviews = Math.max(1, ...activity.map((item) => item.reviews));
+  return (
+    <div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(22px, 1fr))' }}>
+        {activity.map((item) => {
+          const intensity = item.reviews / maxReviews;
+          const background = item.reviews === 0
+            ? 'var(--panel)'
+            : `color-mix(in srgb, var(--green) ${Math.max(22, Math.round(intensity * 88))}%, var(--paper))`;
+          return (
+            <div
+              className="aspect-square rounded-md border"
+              key={item.date}
+              title={`${item.date}: ${item.reviews} 次练习`}
+              style={{ background, borderColor: 'var(--line)' }}
+            />
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center justify-end gap-2 text-xs font-semibold" style={{ color: 'var(--muted)' }}>
+        <span>少</span>
+        <span className="h-3 w-3 rounded-sm border" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }} />
+        <span className="h-3 w-3 rounded-sm border" style={{ borderColor: 'var(--line)', background: 'color-mix(in srgb, var(--green) 36%, var(--paper))' }} />
+        <span className="h-3 w-3 rounded-sm border" style={{ borderColor: 'var(--line)', background: 'color-mix(in srgb, var(--green) 66%, var(--paper))' }} />
+        <span>多</span>
+      </div>
+    </div>
+  );
+}
+
 function HistoryWordDetail({ item }: { item: ReviewLogItem }) {
   const word = item.word;
 
   return (
-    <section className="surface mt-5 rounded-lg p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <section className="surface mt-5 rounded-lg p-4 sm:p-6">
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
         <div>
           <p className="text-sm font-bold" style={{ color: 'var(--green)' }}>单词详情</p>
-          <h3 className="mt-2 text-4xl font-semibold tracking-normal" style={{ color: 'var(--ink)' }}>
+          <h3 className="mt-2 break-words text-3xl font-semibold tracking-normal sm:text-4xl" style={{ color: 'var(--ink)' }}>
             {word?.text ?? item.word_text}
           </h3>
           {word?.phonetic && (
@@ -322,7 +373,7 @@ function getLearningDiagnosis(stats: Stats) {
     };
   }
 
-  if (stats.correct_rate > 0 && stats.correct_rate < 60) {
+  if (stats.weekly_reviews > 0 && stats.weekly_correct_rate < 60) {
     return {
       title: '正确率需要关注',
       description: '近期答题正确率偏低，说明当前内容可能偏难，或者复习节奏有些快。',
@@ -342,10 +393,10 @@ function getLearningDiagnosis(stats: Stats) {
     };
   }
 
-  if (stats.streak_days >= 7 && stats.correct_rate >= 75) {
+  if (stats.streak_days >= 7 && stats.weekly_correct_rate >= 75) {
     return {
       title: '节奏非常稳定',
-      description: '连续学习和正确率都不错，说明当前每日任务量比较适合你。',
+      description: '连续学习和近期正确率都不错，说明当前每日任务量比较适合你。',
       advice: '可以保持现在的设置。如果觉得轻松，可以小幅增加每日新词数量。',
       color: 'var(--green)',
       icon: <Flame size={18} />,
@@ -377,4 +428,10 @@ function MetricRow({ label, value }: { label: string; value: number }) {
       <span className="text-2xl font-semibold" style={{ color: 'var(--ink)' }}>{value}</span>
     </div>
   );
+}
+
+function mergeHistory(current: ReviewLogItem[], incoming: ReviewLogItem[]) {
+  const byId = new Map<number, ReviewLogItem>();
+  [...current, ...incoming].forEach((item) => byId.set(item.id, item));
+  return [...byId.values()];
 }

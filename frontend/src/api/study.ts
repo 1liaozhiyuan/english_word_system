@@ -63,6 +63,24 @@ export async function practiceMistake(token: string, wordId: number) {
   return data;
 }
 
+export async function practiceMistakesBatch(token: string, wordIds: number[]) {
+  const { data } = await api.post<{ scheduled: number }>(
+    '/mistakes/practice-batch',
+    { word_ids: wordIds },
+    { headers: getAuthHeaders(token) },
+  );
+  return data;
+}
+
+export async function resolveMistake(token: string, wordId: number) {
+  const { data } = await api.post<StudyItem>(
+    `/mistakes/${wordId}/resolve`,
+    {},
+    { headers: getAuthHeaders(token) },
+  );
+  return data;
+}
+
 export async function getStudyHistory(token: string) {
   const { data } = await api.get<ReviewLogItem[]>('/study/history', {
     headers: getAuthHeaders(token),

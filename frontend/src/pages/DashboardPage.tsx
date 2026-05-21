@@ -6,6 +6,7 @@ import {
   CalendarCheck,
   CheckCircle2,
   ClipboardCheck,
+  Flame,
   Library,
   RotateCcw,
   Target,
@@ -14,21 +15,33 @@ import { Link } from 'react-router-dom';
 import { getErrorMessage } from '../api/client';
 import { getStatsOverview } from '../api/stats';
 import { useAuth } from '../auth/AuthContext';
+import { LoadingState } from '../components/LoadingState';
 import { Message } from '../components/Message';
 import { PageHeader } from '../components/PageHeader';
 import { StatCard } from '../components/StatCard';
-import { LoadingState } from '../components/LoadingState';
 import type { Stats } from '../types';
 
 export function DashboardPage() {
   const { token, user } = useAuth();
   const [stats, setStats] = React.useState<Stats | null>(null);
   const [message, setMessage] = React.useState('');
+  const [isLoading, setIsLoading] = React.useState(true);
+
+  async function loadStats() {
+    setIsLoading(true);
+    setMessage('');
+    try {
+      setStats(await getStatsOverview(token));
+    } catch (error) {
+      setStats(null);
+      setMessage(getErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   React.useEffect(() => {
-    getStatsOverview(token)
-      .then(setStats)
-      .catch((error) => setMessage(getErrorMessage(error)));
+    loadStats();
   }, [token]);
 
   const plan = stats ? getTodayPlan(stats) : null;
@@ -42,9 +55,20 @@ export function DashboardPage() {
       />
       <Message tone="error">{message}</Message>
 
-      {!stats && !message && <LoadingState text="正在生成今日学习建议..." />}
+      {isLoading && <LoadingState text="正在生成今日学习建议..." />}
 
-      {stats && plan && (
+      {!isLoading && message && (
+        <section className="surface rounded-lg p-5">
+          <p className="text-sm leading-6" style={{ color: 'var(--muted)' }}>
+            今日建议需要从后端读取统计数据。请确认后端服务、PostgreSQL 和数据库迁移都正常后再重试。
+          </p>
+          <button className="button-primary mt-4" onClick={loadStats} type="button">
+            重新加载
+          </button>
+        </section>
+      )}
+
+      {!isLoading && stats && plan && (
         <>
           <section className="surface mb-5 rounded-lg p-6">
             <div className="grid gap-6 lg:grid-cols-[1fr_320px] lg:items-start">
@@ -85,8 +109,8 @@ export function DashboardPage() {
                   {plan.coachNote}
                 </p>
                 <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                  <MiniMetric label="新词" value={stats.due_new} />
-                  <MiniMetric label="复习" value={stats.due_review} />
+                  <MiniMetric label="新词任务" value={stats.due_new} />
+                  <MiniMetric label="复习任务" value={stats.due_review} />
                   <MiniMetric label="已完成" value={stats.completed_today} />
                 </div>
               </div>
@@ -94,18 +118,33 @@ export function DashboardPage() {
           </section>
 
           <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="待学新词" value={stats.due_new} />
-            <StatCard label="待复习" value={stats.due_review} />
+            <StatCard label="今日待学新词" value={stats.due_new} suffix={`/ ${stats.daily_new_limit}`} />
+            <StatCard label="今日待复习" value={stats.due_review} suffix={`/ ${stats.daily_review_limit}`} />
             <StatCard label="错词需关注" value={stats.mistakes} />
             <StatCard label="今日已完成" value={stats.completed_today} />
           </section>
 
           <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <StatCard label="连续学习" value={stats.streak_days} suffix="天" />
-            <StatCard label="正确率" value={stats.correct_rate} suffix="%" />
-            <StatCard label="已掌握" value={stats.mastered} />
-            <StatCard label="学习中" value={stats.total_learning} />
+            <StatCard label="本周正确率" value={stats.weekly_correct_rate} suffix="%" />
+            <StatCard label="掌握率" value={stats.mastered_rate} suffix="%" />
+            <StatCard label="30天活跃" value={stats.active_days_30} suffix="天" />
             <StatCard label="重点难词" value={stats.leeches} />
+          </section>
+
+          <section className="surface mb-5 rounded-lg p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-semibold">30 天学习热力</h3>
+                <p className="mt-1 text-sm" style={{ color: 'var(--muted)' }}>
+                  最近 30 天共有 {stats.active_days_30} 天发生学习记录。
+                </p>
+              </div>
+              <Link className="button-secondary" to="/stats">
+                查看详细数据
+              </Link>
+            </div>
+            <ActivityHeatmap activity={stats.monthly_activity} />
           </section>
 
           <section className="grid gap-4 lg:grid-cols-3">
@@ -113,8 +152,8 @@ export function DashboardPage() {
               icon={<BookOpen size={27} />}
               tone="green"
               label="新词学习"
-              title={`${stats.due_new} 个新词`}
-              description="先处理未学过的新词。答完后，系统会根据表现安排后续复习。"
+              title={`${stats.due_new} 个今日新词`}
+              description={`今天的新词任务上限是 ${stats.daily_new_limit} 个。当前词书计划中还有 ${stats.available_new} 个未学新词。`}
               action="学习新词"
               to="/study"
               disabled={stats.due_new === 0}
@@ -123,8 +162,8 @@ export function DashboardPage() {
               icon={<RotateCcw size={27} />}
               tone="amber"
               label="到期复习"
-              title={`${stats.due_review} 个复习`}
-              description="复习已经学过且今天到期的单词，优先处理它们可以降低遗忘风险。"
+              title={`${stats.due_review} 个今日复习`}
+              description={`今天的复习任务上限是 ${stats.daily_review_limit} 个。当前到期复习共有 ${stats.available_review} 个。`}
               action="开始复习"
               to="/review"
               disabled={stats.due_review === 0}
@@ -172,8 +211,8 @@ function getTodayPlan(stats: Stats) {
   if (stats.due_review > 0) {
     return {
       priority: '先复习',
-      title: `先处理 ${stats.due_review} 个到期复习`,
-      description: '到期复习代表这些词已经进入遗忘风险区。先复习，再学习新词，会让记忆曲线更稳定。',
+      title: `先处理 ${stats.due_review} 个今日复习`,
+      description: `当前共有 ${stats.available_review} 个到期复习，今天按设置先安排 ${stats.due_review} 个。`,
       coachNote: stats.due_new > 0
         ? `建议先完成复习，再学习 ${stats.due_new} 个新词。`
         : '今天没有新词压力，把到期复习清理掉就很漂亮。',
@@ -190,8 +229,8 @@ function getTodayPlan(stats: Stats) {
     return {
       priority: '学新词',
       title: `今天适合学习 ${stats.due_new} 个新词`,
-      description: '当前没有到期复习，可以放心加入新词。完成后系统会自动安排后续复习时间。',
-      coachNote: stats.correct_rate >= 80
+      description: `当前词书计划中还有 ${stats.available_new} 个未学新词，今天按设置安排 ${stats.due_new} 个。`,
+      coachNote: stats.weekly_correct_rate >= 80
         ? '最近正确率不错，可以保持当前节奏。'
         : '学习新词时建议慢一点，优先保证回忆质量。',
       primaryAction: '学习新词',
@@ -234,6 +273,37 @@ function getTodayPlan(stats: Stats) {
     toneColor: 'var(--green)',
     icon: <CalendarCheck size={18} />,
   };
+}
+
+function ActivityHeatmap({ activity }: { activity: Stats['monthly_activity'] }) {
+  const maxReviews = Math.max(1, ...activity.map((item) => item.reviews));
+  return (
+    <div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(22px, 1fr))' }}>
+        {activity.map((item) => {
+          const intensity = item.reviews / maxReviews;
+          const background = item.reviews === 0
+            ? 'var(--panel)'
+            : `color-mix(in srgb, var(--green) ${Math.max(22, Math.round(intensity * 88))}%, var(--paper))`;
+          return (
+            <div
+              className="aspect-square rounded-md border"
+              key={item.date}
+              title={`${item.date}: ${item.reviews} 次练习`}
+              style={{ background, borderColor: 'var(--line)' }}
+            />
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center justify-end gap-2 text-xs font-semibold" style={{ color: 'var(--muted)' }}>
+        <span>少</span>
+        <span className="h-3 w-3 rounded-sm border" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }} />
+        <span className="h-3 w-3 rounded-sm border" style={{ borderColor: 'var(--line)', background: 'color-mix(in srgb, var(--green) 36%, var(--paper))' }} />
+        <span className="h-3 w-3 rounded-sm border" style={{ borderColor: 'var(--line)', background: 'color-mix(in srgb, var(--green) 66%, var(--paper))' }} />
+        <span>多</span>
+      </div>
+    </div>
+  );
 }
 
 function MiniMetric({ label, value }: { label: string; value: number }) {

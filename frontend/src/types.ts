@@ -33,7 +33,12 @@ export type StudyItem = {
   mastery_level: number;
   easiness_factor: number;
   interval_days: number;
+  correct_count: number;
+  wrong_count: number;
+  last_reviewed_at: string | null;
+  next_review_at: string | null;
   is_leech: boolean;
+  is_favorite: boolean;
   word: Word;
 };
 
@@ -48,6 +53,7 @@ export type WordProgress = {
   last_reviewed_at: string | null;
   next_review_at: string | null;
   is_leech: boolean;
+  is_favorite: boolean;
 };
 
 export type ReviewLogItem = {
@@ -81,6 +87,8 @@ export type WordBook = {
   id: number;
   title: string;
   description: string;
+  category: string;
+  difficulty: string;
   word_count: number;
 };
 
@@ -96,6 +104,8 @@ export type WordBookProgress = WordBook & {
 export type WordBookPayload = {
   title: string;
   description: string;
+  category: string;
+  difficulty: string;
 };
 
 export type WordBookDetail = WordBook & {
@@ -105,15 +115,28 @@ export type WordBookDetail = WordBook & {
 export type Stats = {
   total_learning: number;
   mastered: number;
+  mastered_rate: number;
   mistakes: number;
   leeches: number;
   due_today: number;
   due_new: number;
   due_review: number;
+  available_new: number;
+  available_review: number;
+  daily_new_limit: number;
+  daily_review_limit: number;
+  new_completed_today: number;
+  review_completed_today: number;
   completed_today: number;
+  total_reviews: number;
+  correct_reviews: number;
   correct_rate: number;
+  weekly_reviews: number;
+  weekly_correct_rate: number;
+  active_days_30: number;
   streak_days: number;
   activity: DailyActivity[];
+  monthly_activity: DailyActivity[];
 };
 
 export type UserSettings = {
@@ -122,6 +145,10 @@ export type UserSettings = {
   default_study_mode: StudyMode;
   auto_play_word: boolean;
   auto_play_example: boolean;
+  auto_reveal_after_audio: boolean;
+  auto_advance: boolean;
+  answer_delay_ms: number;
+  word_book_page_size: number;
 };
 
 export type AuthResponse = {
@@ -133,6 +160,35 @@ export type WordBookImportResult = {
   id: number;
   title: string;
   imported_count: number;
+  skipped_count: number;
+};
+
+export type CSVPreviewWord = {
+  row_number: number;
+  word: string;
+  meaning: string;
+  phonetic: string | null;
+  part_of_speech: string | null;
+  example_sentence: string | null;
+  example_translation: string | null;
+  note: string | null;
+  duplicate_in_file: boolean;
+  duplicate_in_database: boolean;
+};
+
+export type CSVPreviewError = {
+  row_number: number;
+  message: string;
+};
+
+export type WordBookImportPreview = {
+  total_rows: number;
+  valid_count: number;
+  error_count: number;
+  duplicate_in_file_count: number;
+  duplicate_in_database_count: number;
+  words: CSVPreviewWord[];
+  errors: CSVPreviewError[];
 };
 
 export type PaginatedResponse<T> = {

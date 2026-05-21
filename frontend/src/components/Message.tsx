@@ -22,7 +22,7 @@ export function Message({
       role={tone === 'error' ? 'alert' : 'status'}
     >
       <Icon className="mt-0.5 flex-shrink-0" size={17} />
-      <div className="min-w-0 leading-6">{children}</div>
+      <div className="min-w-0 whitespace-pre-wrap break-words leading-6">{children}</div>
     </div>
   );
 }

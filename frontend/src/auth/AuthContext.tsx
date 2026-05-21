@@ -7,9 +7,11 @@ type AuthContextValue = {
   token: string;
   user: User | null;
   isAuthenticated: boolean;
+  isInitializing: boolean;
   message: string;
   login: (email: string, password: string) => Promise<boolean>;
   register: (email: string, password: string) => Promise<boolean>;
+  acceptToken: (token: string, successMessage?: string) => Promise<boolean>;
   logout: () => void;
   clearMessage: () => void;
 };
@@ -20,6 +22,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = React.useState(localStorage.getItem('token') ?? '');
   const [user, setUser] = React.useState<User | null>(null);
   const [message, setMessage] = React.useState('');
+  const [isInitializing, setIsInitializing] = React.useState(Boolean(token));
 
   async function loadUser(nextToken: string) {
     const currentUser = await getMe(nextToken);
@@ -29,12 +32,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function login(email: string, password: string) {
     try {
       const data = await loginApi(email, password);
-      localStorage.setItem('token', data.access_token);
-      setToken(data.access_token);
-      await loadUser(data.access_token);
-      setMessage('登录成功。');
-      return true;
+      return acceptToken(data.access_token, '登录成功。');
     } catch (error) {
+      localStorage.removeItem('token');
+      setToken('');
+      setUser(null);
       setMessage(getErrorMessage(error));
       return false;
     }
@@ -43,12 +45,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function register(email: string, password: string) {
     try {
       const data = await registerApi(email, password);
-      localStorage.setItem('token', data.access_token);
-      setToken(data.access_token);
-      await loadUser(data.access_token);
-      setMessage('注册成功。');
+      return acceptToken(data.access_token, '注册成功。');
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+      return false;
+    }
+  }
+
+  async function acceptToken(nextToken: string, successMessage = '操作成功。') {
+    try {
+      localStorage.setItem('token', nextToken);
+      setToken(nextToken);
+      await loadUser(nextToken);
+      setMessage(successMessage);
       return true;
     } catch (error) {
+      localStorage.removeItem('token');
+      setToken('');
+      setUser(null);
       setMessage(getErrorMessage(error));
       return false;
     }
@@ -62,26 +76,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   React.useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      setIsInitializing(false);
+      return;
+    }
+    setIsInitializing(true);
     loadUser(token).catch(() => {
       localStorage.removeItem('token');
       setToken('');
       setUser(null);
-    });
+    }).finally(() => setIsInitializing(false));
   }, [token]);
 
   const value = React.useMemo(
     () => ({
       token,
       user,
-      isAuthenticated: Boolean(token),
+      isAuthenticated: Boolean(token && user),
+      isInitializing,
       message,
       login,
       register,
+      acceptToken,
       logout,
       clearMessage: () => setMessage(''),
     }),
-    [token, user, message],
+    [token, user, isInitializing, message],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

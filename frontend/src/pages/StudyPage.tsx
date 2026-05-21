@@ -5,8 +5,8 @@ export function StudyPage() {
   return (
     <LearningSession
       title="新词学习"
-      description="这里优先展示未学习的新词。完成后，系统会根据表现安排后续复习。"
-      emptyText="今天没有待学习新词。可以去词书页选择词书，或去复习页完成到期复习。"
+      description="优先学习还没有见过的新单词。完成后，系统会根据你的表现安排后续复习。"
+      emptyText="今天没有待学习的新词。可以去词书页选择词书，或者去复习页清理到期单词。"
       loadItems={getNewStudy}
       completionTitle="新词学习完成"
       defaultBatchSize={10}

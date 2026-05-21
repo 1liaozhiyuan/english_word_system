@@ -25,7 +25,7 @@ export function PageHeader({
           </p>
         )}
       </div>
-      {action && <div className="flex shrink-0 flex-wrap gap-2">{action}</div>}
+      {action && <div className="flex w-full shrink-0 flex-wrap gap-2 md:w-auto md:justify-end">{action}</div>}
     </header>
   );
 }

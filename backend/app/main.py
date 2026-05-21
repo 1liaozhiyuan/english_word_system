@@ -44,6 +44,7 @@ from app.schemas import (
     UserSettingsUpdate,
     WordCreate,
     WordBookDetail,
+    WordBookImportPreview,
     WordBookImportResult,
     WordBookProgressRead,
     WordBookRead,
@@ -63,6 +64,8 @@ from app.services import (
     export_user_data,
     export_word_book_csv,
     get_due_study_items,
+    favorite_word,
+    get_favorite_words_paginated,
     get_due_new_items,
     get_due_review_items,
     get_mistakes,
@@ -74,6 +77,7 @@ from app.services import (
     get_word_book_progress_summary,
     get_word_book_with_count,
     import_word_book_from_csv,
+    parse_word_book_csv,
     list_word_book_progress,
     list_word_book_word_progress_paginated,
     list_word_book_word_progress,
@@ -84,13 +88,17 @@ from app.services import (
     remove_word_from_book,
     request_password_reset,
     reset_password,
+    resolve_mistake,
     schedule_mistake_practice,
+    schedule_mistake_practice_batch,
     search_word_book_words,
     seed_demo_data,
     select_word_book,
     update_word_book,
     update_word,
     update_user_settings,
+    is_favorite_word,
+    unfavorite_word,
 )
 
 
@@ -121,9 +129,19 @@ def build_study_item(item: UserWordProgress) -> StudyItem:
         mastery_level=item.mastery_level,
         easiness_factor=item.easiness_factor,
         interval_days=item.interval_days,
+        correct_count=item.correct_count,
+        wrong_count=item.wrong_count,
+        last_reviewed_at=item.last_reviewed_at,
+        next_review_at=item.next_review_at,
         is_leech=item.is_leech,
         word=item.word,
     )
+
+
+def build_study_item_for_user(session: Session, user: User, item: UserWordProgress) -> StudyItem:
+    study_item = build_study_item(item)
+    study_item.is_favorite = is_favorite_word(session, user, item.word_id)
+    return study_item
 
 
 @app.get("/health")
@@ -190,6 +208,10 @@ def patch_settings(
         payload.default_study_mode,
         payload.auto_play_word,
         payload.auto_play_example,
+        payload.auto_reveal_after_audio,
+        payload.auto_advance,
+        payload.answer_delay_ms,
+        payload.word_book_page_size,
     )
 
 
@@ -202,6 +224,8 @@ def word_books(session: Session = Depends(get_session)) -> list[WordBookRead]:
             id=book.id,
             title=book.title,
             description=book.description,
+            category=book.category,
+            difficulty=book.difficulty,
             word_count=count,
         )
         for book, count in list_word_books(session)
@@ -259,6 +283,8 @@ def word_book_detail(
         id=book.id,
         title=book.title,
         description=book.description,
+        category=book.category,
+        difficulty=book.difficulty,
         word_count=count,
         words=words,
     )
@@ -277,6 +303,8 @@ def patch_word_book(
         id=book.id,
         title=book.title,
         description=book.description,
+        category=book.category,
+        difficulty=book.difficulty,
         word_count=count,
     )
 
@@ -402,9 +430,9 @@ def delete_word_from_book(
     word_id: int,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
-) -> dict[str, str]:
-    remove_word_from_book(session, word_book_id, word_id)
-    return {"status": "deleted"}
+) -> dict[str, str | bool]:
+    word_book_deleted = remove_word_from_book(session, word_book_id, word_id)
+    return {"status": "deleted", "word_book_deleted": word_book_deleted}
 
 
 @app.post("/word-books/{word_book_id}/words/batch-delete")
@@ -413,8 +441,9 @@ def batch_delete_words_endpoint(
     payload: BatchDeleteWords,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
-) -> dict[str, int]:
-    return {"deleted": batch_delete_words(session, word_book_id, payload.word_ids)}
+) -> dict[str, int | bool]:
+    deleted, word_book_deleted = batch_delete_words(session, word_book_id, payload.word_ids)
+    return {"deleted": deleted, "word_book_deleted": word_book_deleted}
 
 
 @app.post("/word-books/{word_book_id}/words/batch-move")
@@ -431,6 +460,8 @@ def batch_move_words_endpoint(
 async def import_word_book(
     title: str = Form(...),
     description: str = Form(""),
+    category: str = Form("通用"),
+    difficulty: str = Form("标准"),
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
@@ -441,8 +472,30 @@ async def import_word_book(
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
 
     content = await file.read()
-    book, imported_count = import_word_book_from_csv(session, title, description, content)
-    return WordBookImportResult(id=book.id, title=book.title, imported_count=imported_count)
+    book, imported_count, skipped_count = import_word_book_from_csv(
+        session, title, description, content, category, difficulty,
+    )
+    return WordBookImportResult(
+        id=book.id,
+        title=book.title,
+        imported_count=imported_count,
+        skipped_count=skipped_count,
+    )
+
+
+@app.post("/word-books/import/preview", response_model=WordBookImportPreview)
+async def preview_word_book_import(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> WordBookImportPreview:
+    if not file.filename.lower().endswith(".csv"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="Only CSV files are supported")
+
+    content = await file.read()
+    return WordBookImportPreview(**parse_word_book_csv(session, content))
 
 
 @app.post("/word-books/{word_book_id}/select")
@@ -503,6 +556,53 @@ def submit_answer(
     )
 
 
+# ── Favorites ──
+
+@app.get("/favorites-paginated")
+def favorites_paginated(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    q: str = Query(default="", min_length=0),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    result = get_favorite_words_paginated(session, current_user, page, page_size, q)
+    return {
+        **result,
+        "items": [
+            build_study_item_for_user(session, current_user, item)
+            for item in result["items"]
+        ],
+    }
+
+
+@app.get("/words/{word_id}/favorite")
+def get_favorite_status(
+    word_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, bool]:
+    return {"is_favorite": is_favorite_word(session, current_user, word_id)}
+
+
+@app.post("/words/{word_id}/favorite")
+def add_favorite_word(
+    word_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, bool]:
+    return {"is_favorite": favorite_word(session, current_user, word_id)}
+
+
+@app.delete("/words/{word_id}/favorite")
+def delete_favorite_word(
+    word_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, bool]:
+    return {"is_favorite": unfavorite_word(session, current_user, word_id)}
+
+
 # ── Mistakes ──
 
 @app.get("/mistakes", response_model=list[StudyItem])
@@ -539,6 +639,24 @@ def practice_mistake(
 
 
 # ── History & Stats ──
+
+@app.post("/mistakes/practice-batch")
+def practice_mistakes_batch(
+    payload: BatchDeleteWords,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, int]:
+    return {"scheduled": schedule_mistake_practice_batch(session, current_user, payload.word_ids)}
+
+
+@app.post("/mistakes/{word_id}/resolve", response_model=StudyItem)
+def resolve_mistake_endpoint(
+    word_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> StudyItem:
+    return build_study_item(resolve_mistake(session, current_user, word_id))
+
 
 @app.get("/study/history", response_model=list[ReviewLogRead])
 def study_history(
