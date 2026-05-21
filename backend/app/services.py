@@ -116,10 +116,10 @@ def authenticate_user(session: Session, email: str, password: str) -> User:
     return user
 
 
-def request_password_reset(session: Session, email: str) -> str:
+def request_password_reset(session: Session, email: str) -> str | None:
     user = session.exec(select(User).where(User.email == email)).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        return None
     token = generate_reset_token()
     user.reset_token = token
     user.reset_token_expires_at = datetime.utcnow() + timedelta(hours=1)
@@ -144,6 +144,16 @@ def reset_password(session: Session, token: str, new_password: str) -> User:
     session.commit()
     session.refresh(user)
     return user
+
+
+def change_password(session: Session, user: User, current_password: str, new_password: str) -> None:
+    if not verify_password(current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    user.hashed_password = hash_password(new_password)
+    user.reset_token = None
+    user.reset_token_expires_at = None
+    session.add(user)
+    session.commit()
 
 
 def list_word_books(session: Session) -> list[tuple[WordBook, int]]:
@@ -995,6 +1005,7 @@ def update_user_settings(
     auto_play_example: bool | None = None,
     auto_reveal_after_audio: bool | None = None,
     auto_advance: bool | None = None,
+    speech_accent: str | None = None,
     answer_delay_ms: int | None = None,
     word_book_page_size: int | None = None,
 ) -> UserSettings:
@@ -1013,6 +1024,8 @@ def update_user_settings(
         settings.auto_reveal_after_audio = auto_reveal_after_audio
     if auto_advance is not None:
         settings.auto_advance = auto_advance
+    if speech_accent is not None:
+        settings.speech_accent = speech_accent
     if answer_delay_ms is not None:
         settings.answer_delay_ms = max(300, min(3000, answer_delay_ms))
     if word_book_page_size is not None:
@@ -1653,6 +1666,7 @@ def get_stats(session: Session, user: User) -> dict[str, int | list[dict[str, in
 
 
 def export_user_data(session: Session, user: User) -> dict:
+    settings = get_or_create_user_settings(session, user)
     progress_items = list(
         session.exec(
             select(UserWordProgress).where(UserWordProgress.user_id == user.id)
@@ -1661,6 +1675,11 @@ def export_user_data(session: Session, user: User) -> dict:
     review_logs = list(
         session.exec(
             select(ReviewLog).where(ReviewLog.user_id == user.id)
+        ).all()
+    )
+    favorite_words = list(
+        session.exec(
+            select(FavoriteWord).where(FavoriteWord.user_id == user.id)
         ).all()
     )
     progress_data = []
@@ -1696,9 +1715,211 @@ def export_user_data(session: Session, user: User) -> dict:
     return {
         "exported_at": datetime.utcnow().isoformat(),
         "user_email": user.email,
+        "settings": {
+            "daily_new_limit": settings.daily_new_limit,
+            "daily_review_limit": settings.daily_review_limit,
+            "default_study_mode": settings.default_study_mode.value,
+            "auto_play_word": settings.auto_play_word,
+            "auto_play_example": settings.auto_play_example,
+            "auto_reveal_after_audio": settings.auto_reveal_after_audio,
+            "auto_advance": settings.auto_advance,
+            "speech_accent": getattr(settings.speech_accent, "value", settings.speech_accent),
+            "answer_delay_ms": settings.answer_delay_ms,
+            "word_book_page_size": settings.word_book_page_size,
+        },
+        "favorites": [
+            {
+                "word_id": favorite.word_id,
+                "word_text": favorite.word.text if favorite.word else "",
+                "created_at": favorite.created_at.isoformat(),
+            }
+            for favorite in favorite_words
+        ],
         "progress": progress_data,
         "review_logs": logs_data,
     }
+
+
+def export_user_anki_tsv(session: Session, user: User) -> str:
+    progress_items = list(
+        session.exec(
+            select(UserWordProgress)
+            .where(UserWordProgress.user_id == user.id)
+            .order_by(UserWordProgress.word_id)
+        ).all()
+    )
+    rows = [["word", "phonetic", "meaning", "part_of_speech", "example", "example_translation", "note"]]
+    seen: set[int] = set()
+    for progress in progress_items:
+        if progress.word_id in seen:
+            continue
+        seen.add(progress.word_id)
+        word = progress.word
+        if not word:
+            continue
+        rows.append(
+            [
+                word.text,
+                word.phonetic or "",
+                word.meaning,
+                word.part_of_speech or "",
+                word.example_sentence or "",
+                word.example_translation or "",
+                word.note or "",
+            ]
+        )
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter="\t", lineterminator="\n")
+    writer.writerows(rows)
+    return output.getvalue()
+
+
+def import_user_data(session: Session, user: User, data: dict) -> dict[str, int | bool]:
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Invalid backup file")
+
+    result: dict[str, int | bool] = {
+        "progress_imported": 0,
+        "logs_imported": 0,
+        "favorites_imported": 0,
+        "settings_imported": False,
+    }
+
+    settings_data = data.get("settings")
+    if isinstance(settings_data, dict):
+        update_user_settings(
+            session,
+            user,
+            settings_data.get("daily_new_limit"),
+            settings_data.get("daily_review_limit"),
+            _safe_study_mode(settings_data.get("default_study_mode")),
+            settings_data.get("auto_play_word"),
+            settings_data.get("auto_play_example"),
+            settings_data.get("auto_reveal_after_audio"),
+            settings_data.get("auto_advance"),
+            settings_data.get("speech_accent") if settings_data.get("speech_accent") in {"en-US", "en-GB"} else None,
+            settings_data.get("answer_delay_ms"),
+            settings_data.get("word_book_page_size"),
+        )
+        result["settings_imported"] = True
+
+    for item in data.get("progress", []):
+        if not isinstance(item, dict):
+            continue
+        word = _find_backup_word(session, item)
+        if not word:
+            continue
+        progress = session.exec(
+            select(UserWordProgress).where(
+                UserWordProgress.user_id == user.id,
+                UserWordProgress.word_id == word.id,
+            )
+        ).first()
+        if not progress:
+            progress = UserWordProgress(user_id=user.id, word_id=word.id)
+
+        progress.status = _safe_progress_status(item.get("status"))
+        progress.mastery_level = _safe_int(item.get("mastery_level"), 0)
+        progress.easiness_factor = _safe_float(item.get("easiness_factor"), 2.5)
+        progress.interval_days = _safe_float(item.get("interval_days"), 0)
+        progress.correct_count = _safe_int(item.get("correct_count"), 0)
+        progress.wrong_count = _safe_int(item.get("wrong_count"), 0)
+        progress.is_leech = bool(item.get("is_leech", False))
+        progress.last_reviewed_at = _parse_datetime(item.get("last_reviewed_at"))
+        progress.next_review_at = _parse_datetime(item.get("next_review_at")) or datetime.utcnow()
+        session.add(progress)
+        result["progress_imported"] = int(result["progress_imported"]) + 1
+
+    session.commit()
+
+    for item in data.get("favorites", []):
+        if not isinstance(item, dict):
+            continue
+        word = _find_backup_word(session, item)
+        if not word or is_favorite_word(session, user, word.id):
+            continue
+        session.add(FavoriteWord(user_id=user.id, word_id=word.id))
+        result["favorites_imported"] = int(result["favorites_imported"]) + 1
+
+    for item in data.get("review_logs", []):
+        if not isinstance(item, dict):
+            continue
+        word = _find_backup_word(session, item)
+        created_at = _parse_datetime(item.get("created_at"))
+        if not word or not created_at:
+            continue
+        existing = session.exec(
+            select(ReviewLog).where(
+                ReviewLog.user_id == user.id,
+                ReviewLog.word_id == word.id,
+                ReviewLog.created_at == created_at,
+            )
+        ).first()
+        if existing:
+            continue
+        session.add(
+            ReviewLog(
+                user_id=user.id,
+                word_id=word.id,
+                study_mode=_safe_study_mode(item.get("study_mode")) or StudyMode.en_to_cn,
+                quality=max(0, min(3, _safe_int(item.get("quality"), 0))),
+                is_correct=bool(item.get("is_correct", False)),
+                created_at=created_at,
+            )
+        )
+        result["logs_imported"] = int(result["logs_imported"]) + 1
+
+    session.commit()
+    return result
+
+
+def _find_backup_word(session: Session, item: dict) -> Word | None:
+    word_id = item.get("word_id")
+    if isinstance(word_id, int):
+        word = session.get(Word, word_id)
+        if word:
+            return word
+    word_text = (item.get("word_text") or "").strip()
+    if not word_text:
+        return None
+    return session.exec(select(Word).where(Word.text == word_text)).first()
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _safe_int(value: object, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: object, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_study_mode(value: object) -> StudyMode | None:
+    try:
+        return StudyMode(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_progress_status(value: object) -> ProgressStatus:
+    try:
+        return ProgressStatus(value)
+    except (TypeError, ValueError):
+        return ProgressStatus.new
 
 
 def seed_demo_data(session: Session) -> None:

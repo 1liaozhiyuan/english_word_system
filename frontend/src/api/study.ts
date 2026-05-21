@@ -1,5 +1,5 @@
 import { api, getAuthHeaders } from './client';
-import type { AnswerResult, PaginatedResponse, ReviewLogItem, StudyItem, StudyMode } from '../types';
+import type { AnswerResult, DataImportResult, PaginatedResponse, ReviewLogItem, StudyItem, StudyMode } from '../types';
 
 export async function getTodayStudy(token: string) {
   const { data } = await api.get<StudyItem[]>('/study/today', {
@@ -100,6 +100,23 @@ export async function exportUserData(token: string) {
   const { data } = await api.get<Blob>('/data/export', {
     headers: getAuthHeaders(token),
     responseType: 'blob',
+  });
+  return data;
+}
+
+export async function exportAnkiData(token: string) {
+  const { data } = await api.get<Blob>('/data/export/anki', {
+    headers: getAuthHeaders(token),
+    responseType: 'blob',
+  });
+  return data;
+}
+
+export async function importUserData(token: string, file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<DataImportResult>('/data/import', form, {
+    headers: getAuthHeaders(token),
   });
   return data;
 }

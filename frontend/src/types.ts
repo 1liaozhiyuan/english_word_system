@@ -1,4 +1,5 @@
 export type StudyMode = 'en_to_cn' | 'cn_to_en' | 'listening' | 'spelling';
+export type SpeechAccent = 'en-US' | 'en-GB';
 
 export type User = {
   id: number;
@@ -147,6 +148,7 @@ export type UserSettings = {
   auto_play_example: boolean;
   auto_reveal_after_audio: boolean;
   auto_advance: boolean;
+  speech_accent: SpeechAccent;
   answer_delay_ms: number;
   word_book_page_size: number;
 };
@@ -161,6 +163,13 @@ export type WordBookImportResult = {
   title: string;
   imported_count: number;
   skipped_count: number;
+};
+
+export type DataImportResult = {
+  progress_imported: number;
+  logs_imported: number;
+  favorites_imported: number;
+  settings_imported: boolean;
 };
 
 export type CSVPreviewWord = {

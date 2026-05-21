@@ -1,6 +1,8 @@
 from datetime import datetime
 from enum import Enum
 
+from sqlalchemy import Column
+from sqlalchemy import Enum as SAEnum
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -20,6 +22,11 @@ class StudyMode(str, Enum):
     cn_to_en = "cn_to_en"
     listening = "listening"
     spelling = "spelling"
+
+
+class SpeechAccent(str, Enum):
+    us = "en-US"
+    uk = "en-GB"
 
 
 class User(SQLModel, table=True):
@@ -43,6 +50,16 @@ class UserSettings(SQLModel, table=True):
     auto_play_example: bool = True
     auto_reveal_after_audio: bool = False
     auto_advance: bool = True
+    speech_accent: SpeechAccent = Field(
+        default=SpeechAccent.us,
+        sa_column=Column(
+            SAEnum(
+                SpeechAccent,
+                values_callable=lambda enum_class: [item.value for item in enum_class],
+            ),
+            nullable=False,
+        ),
+    )
     answer_delay_ms: int = 800
     word_book_page_size: int = 30
     created_at: datetime = Field(default_factory=utc_now)

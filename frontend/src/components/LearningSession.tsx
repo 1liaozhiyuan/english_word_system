@@ -9,7 +9,7 @@ import { Message } from './Message';
 import { LoadingState } from './LoadingState';
 import { PageHeader } from './PageHeader';
 import { WordCard } from './WordCard';
-import type { AnswerResult, StudyItem, StudyMode, Word } from '../types';
+import type { AnswerResult, SpeechAccent, StudyItem, StudyMode, Word } from '../types';
 
 const answerText: Record<number, string> = {
   0: '不认识',
@@ -51,6 +51,7 @@ export function LearningSession({
   const [autoPlayExample, setAutoPlayExample] = React.useState(true);
   const [autoRevealAfterAudio, setAutoRevealAfterAudio] = React.useState(false);
   const [autoAdvance, setAutoAdvance] = React.useState(true);
+  const [speechAccent, setSpeechAccent] = React.useState<SpeechAccent>('en-US');
   const [answerDelayMs, setAnswerDelayMs] = React.useState(800);
   const [pendingItems, setPendingItems] = React.useState<StudyItem[] | null>(null);
   const [settingsLoaded, setSettingsLoaded] = React.useState(false);
@@ -160,6 +161,7 @@ export function LearningSession({
         setAutoPlayExample(settings.auto_play_example);
         setAutoRevealAfterAudio(settings.auto_reveal_after_audio);
         setAutoAdvance(settings.auto_advance);
+        setSpeechAccent(settings.speech_accent ?? 'en-US');
         setAnswerDelayMs(settings.answer_delay_ms);
         setSettingsLoaded(true);
       })
@@ -239,6 +241,7 @@ export function LearningSession({
             autoPlayWord={autoPlayWord}
             autoPlayExample={autoPlayExample}
             autoRevealAfterAudio={autoRevealAfterAudio}
+            speechAccent={speechAccent}
             isSubmitting={isSubmitting}
             isWaitingNext={isWaitingNext}
             onAnswer={handleAnswer}

@@ -31,6 +31,8 @@ from app.schemas import (
     BatchDeleteWordBooks,
     BatchDeleteWords,
     BatchMoveWords,
+    DataImportResult,
+    PasswordChange,
     PasswordReset,
     PasswordResetRequest,
     ReviewLogRead,
@@ -60,7 +62,9 @@ from app.services import (
     batch_delete_word_books,
     batch_delete_words,
     batch_move_words,
+    change_password,
     delete_word_book,
+    export_user_anki_tsv,
     export_user_data,
     export_word_book_csv,
     get_due_study_items,
@@ -76,6 +80,7 @@ from app.services import (
     get_stats,
     get_word_book_progress_summary,
     get_word_book_with_count,
+    import_user_data,
     import_word_book_from_csv,
     parse_word_book_csv,
     list_word_book_progress,
@@ -168,7 +173,10 @@ def forgot_password(
     payload: PasswordResetRequest, session: Session = Depends(get_session)
 ) -> dict[str, str]:
     token = request_password_reset(session, payload.email)
-    return {"reset_token": token}
+    response = {"message": "If the account exists, a reset link has been prepared."}
+    if token and settings.expose_reset_token_in_response:
+        response["reset_token"] = token
+    return response
 
 
 @app.post("/auth/reset-password", response_model=TokenResponse)
@@ -177,6 +185,16 @@ def do_reset_password(
 ) -> TokenResponse:
     user = reset_password(session, payload.token, payload.new_password)
     return TokenResponse(access_token=create_access_token(str(user.id)))
+
+
+@app.post("/auth/change-password")
+def do_change_password(
+    payload: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict[str, str]:
+    change_password(session, current_user, payload.current_password, payload.new_password)
+    return {"status": "password_changed"}
 
 
 @app.get("/me", response_model=UserRead)
@@ -210,6 +228,7 @@ def patch_settings(
         payload.auto_play_example,
         payload.auto_reveal_after_audio,
         payload.auto_advance,
+        payload.speech_accent,
         payload.answer_delay_ms,
         payload.word_book_page_size,
     )
@@ -811,3 +830,39 @@ def export_data(
             "Content-Disposition": "attachment; filename=english-word-backup.json",
         },
     )
+
+
+@app.get("/data/export/anki")
+def export_anki_data(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> Response:
+    tsv_text = export_user_anki_tsv(session, current_user)
+    return Response(
+        content=tsv_text.encode("utf-8-sig"),
+        media_type="text/tab-separated-values; charset=utf-8",
+        headers={
+            "Content-Disposition": "attachment; filename=english-word-anki.tsv",
+        },
+    )
+
+
+@app.post("/data/import", response_model=DataImportResult)
+async def import_data(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> DataImportResult:
+    if not file.filename.lower().endswith(".json"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="Only JSON backup files are supported")
+
+    content = await file.read()
+    try:
+        data = __import__("json").loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, __import__("json").JSONDecodeError):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="Invalid JSON backup file")
+    return DataImportResult(**import_user_data(session, current_user, data))

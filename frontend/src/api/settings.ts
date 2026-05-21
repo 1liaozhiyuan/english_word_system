@@ -1,5 +1,5 @@
 import { api, getAuthHeaders } from './client';
-import type { StudyMode, UserSettings } from '../types';
+import type { SpeechAccent, StudyMode, UserSettings } from '../types';
 
 export async function getSettings(token: string) {
   const { data } = await api.get<UserSettings>('/settings', {
@@ -18,6 +18,7 @@ export async function updateSettings(
     auto_play_example?: boolean;
     auto_reveal_after_audio?: boolean;
     auto_advance?: boolean;
+    speech_accent?: SpeechAccent;
     answer_delay_ms?: number;
     word_book_page_size?: number;
   },

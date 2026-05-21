@@ -25,6 +25,14 @@ export function ForgotPasswordPage() {
     setIsSubmitting(true);
     try {
       const data = await forgotPassword(email.trim());
+      if (!data.reset_token) {
+        setResetLink('');
+        setResetToken('');
+        setMessage('如果这个邮箱已经注册，系统会发送一封重置邮件。请检查邮箱后继续。');
+        setMessageTone('info');
+        setSent(true);
+        return;
+      }
       const link = `${window.location.origin}/reset-password?token=${encodeURIComponent(data.reset_token)}`;
       setResetLink(link);
       setResetToken(data.reset_token);
@@ -61,13 +69,21 @@ export function ForgotPasswordPage() {
         </form>
       ) : (
         <div className="mt-4 space-y-3">
-          <div className="rounded-lg border p-3 text-sm leading-6" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
-            <p className="font-bold">开发环境重置链接</p>
-            <p className="mt-2 break-all" style={{ color: 'var(--muted)' }}>{resetLink}</p>
-          </div>
-          <button className="button-primary w-full" onClick={() => navigate(`/reset-password?token=${encodeURIComponent(resetToken)}`)} type="button">
-            前往重置密码
-          </button>
+          {resetLink ? (
+            <>
+              <div className="rounded-lg border p-3 text-sm leading-6" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
+                <p className="font-bold">开发环境重置链接</p>
+                <p className="mt-2 break-all" style={{ color: 'var(--muted)' }}>{resetLink}</p>
+              </div>
+              <button className="button-primary w-full" onClick={() => navigate(`/reset-password?token=${encodeURIComponent(resetToken)}`)} type="button">
+                前往重置密码
+              </button>
+            </>
+          ) : (
+            <div className="rounded-lg border p-3 text-sm leading-6" style={{ borderColor: 'var(--line)', background: 'var(--panel)', color: 'var(--muted)' }}>
+              邮件发送能力接入后，这里不会显示开发环境链接。
+            </div>
+          )}
         </div>
       )}
       <p className="mt-5 text-center text-sm" style={{ color: 'var(--muted)' }}>

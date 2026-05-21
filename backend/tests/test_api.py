@@ -65,6 +65,28 @@ def test_auth_login_and_password_reset_flow():
 
     response = client.post("/auth/login", json={"email": email, "password": "newpassword123"})
     assert response.status_code == 200
+    token = response.json()["access_token"]
+
+    response = client.post(
+        "/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "wrongpassword", "new_password": "changed123"},
+    )
+    assert response.status_code == 400
+
+    response = client.post(
+        "/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "newpassword123", "new_password": "changed123"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "password_changed"
+
+    response = client.post("/auth/login", json={"email": email, "password": "newpassword123"})
+    assert response.status_code == 401
+
+    response = client.post("/auth/login", json={"email": email, "password": "changed123"})
+    assert response.status_code == 200
 
 
 def test_core_learning_flow():
@@ -92,6 +114,7 @@ def test_core_learning_flow():
         "auto_play_example": True,
         "auto_reveal_after_audio": False,
         "auto_advance": True,
+        "speech_accent": "en-US",
         "answer_delay_ms": 800,
         "word_book_page_size": 30,
     }
@@ -104,6 +127,7 @@ def test_core_learning_flow():
             "auto_play_example": False,
             "auto_reveal_after_audio": True,
             "auto_advance": False,
+            "speech_accent": "en-GB",
             "answer_delay_ms": 1300,
             "word_book_page_size": 50,
         },
@@ -113,6 +137,7 @@ def test_core_learning_flow():
     assert response.json()["auto_play_example"] is False
     assert response.json()["auto_reveal_after_audio"] is True
     assert response.json()["auto_advance"] is False
+    assert response.json()["speech_accent"] == "en-GB"
     assert response.json()["answer_delay_ms"] == 1300
     assert response.json()["word_book_page_size"] == 50
 
@@ -260,6 +285,32 @@ def test_core_learning_flow():
     history_page = response.json()
     assert history_page["total"] >= 1
     assert history_page["items"][0]["word_id"] == new_items[0]["word"]["id"]
+
+    response = client.get("/data/export", headers=headers)
+    assert response.status_code == 200
+    backup = response.content
+
+    response = client.get("/data/export/anki", headers=headers)
+    assert response.status_code == 200
+    assert "text/tab-separated-values" in response.headers["content-type"]
+    assert "word\tphonetic\tmeaning" in response.text
+    assert new_items[0]["word"]["text"] in response.text
+
+    import_headers = create_user_headers("restore")
+    response = client.post(
+        "/data/import",
+        headers=import_headers,
+        files={"file": ("backup.json", backup, "application/json")},
+    )
+    assert response.status_code == 200
+    import_result = response.json()
+    assert import_result["settings_imported"] is True
+    assert import_result["progress_imported"] >= 1
+    assert import_result["logs_imported"] >= 1
+
+    response = client.get("/stats/overview", headers=import_headers)
+    assert response.status_code == 200
+    assert response.json()["total_reviews"] >= 1
 
     response = client.post(
         f"/mistakes/{new_items[0]['word']['id']}/practice",

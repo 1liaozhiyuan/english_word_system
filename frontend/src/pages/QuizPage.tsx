@@ -14,6 +14,7 @@ import {
 import { Link } from 'react-router-dom';
 import { generateQuiz } from '../api/ai';
 import { getErrorMessage } from '../api/client';
+import { getFavoritesPaginated } from '../api/favorites';
 import { getMistakes, getNewStudy, getTodayReview, submitAnswer } from '../api/study';
 import { useAuth } from '../auth/AuthContext';
 import { AIResultPanel } from '../components/AIResultPanel';
@@ -25,6 +26,7 @@ import type { StudyItem, StudyMode, Word } from '../types';
 type QuizType = 'choice' | 'spelling';
 type QuizTypeFilter = 'mixed' | QuizType;
 type QuizMode = 'practice' | 'formal';
+type QuizSource = 'mixed' | 'review' | 'new' | 'mistakes' | 'favorites';
 
 type QuizQuestion = {
   id: string;
@@ -54,6 +56,14 @@ const quizTypeOptions: { value: QuizTypeFilter; label: string; description: stri
 
 const questionCountOptions = [8, 12, 16, 20];
 
+const quizSourceOptions: { value: QuizSource; label: string; description: string }[] = [
+  { value: 'mixed', label: '综合', description: '复习、错词和新词混合出题' },
+  { value: 'review', label: '今日复习', description: '只测试今天到期的复习词' },
+  { value: 'new', label: '新词', description: '只测试当前待学的新词' },
+  { value: 'mistakes', label: '错词', description: '只测试错词本中的单词' },
+  { value: 'favorites', label: '收藏', description: '只测试收藏夹中的单词' },
+];
+
 export function QuizPage() {
   const { token } = useAuth();
   const [questions, setQuestions] = React.useState<QuizQuestion[]>([]);
@@ -66,24 +76,20 @@ export function QuizPage() {
   const [aiQuiz, setAiQuiz] = React.useState('');
   const [isAiLoading, setIsAiLoading] = React.useState(false);
   const [quizMode, setQuizMode] = React.useState<QuizMode>('practice');
+  const [quizSource, setQuizSource] = React.useState<QuizSource>('mixed');
   const [quizType, setQuizType] = React.useState<QuizTypeFilter>('mixed');
   const [questionCount, setQuestionCount] = React.useState(12);
   const aiAbortRef = React.useRef<AbortController | null>(null);
 
   React.useEffect(() => {
     loadQuiz();
-  }, [token, quizType, questionCount]);
+  }, [token, quizSource, quizType, questionCount]);
 
   async function loadQuiz() {
     setIsLoading(true);
     setMessage({ text: '', tone: 'success' });
     try {
-      const [reviews, news, mistakes] = await Promise.all([
-        getTodayReview(token, Math.max(questionCount, 12)),
-        getNewStudy(token, Math.max(questionCount, 12)),
-        getMistakes(token),
-      ]);
-      const pool = uniqueStudyItems([...reviews, ...mistakes.slice(0, 10), ...news]);
+      const pool = await loadQuestionPool(token, quizSource, questionCount);
       const nextQuestions = buildQuestions(pool.slice(0, questionCount), pool.map((item) => item.word), quizType);
       setQuestions(nextQuestions);
       setRecords([]);
@@ -221,7 +227,25 @@ export function QuizPage() {
         </div>
 
         <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-5">
+            {quizSourceOptions.map((option) => (
+              <button
+                className={quizSource === option.value ? 'rounded-lg border p-4 text-left' : 'rounded-lg border p-4 text-left transition hover:-translate-y-0.5'}
+                key={option.value}
+                onClick={() => setQuizSource(option.value)}
+                style={{
+                  borderColor: quizSource === option.value ? 'var(--green)' : 'var(--line)',
+                  background: quizSource === option.value ? 'var(--green-soft)' : 'var(--paper)',
+                }}
+                type="button"
+              >
+                <div className="font-semibold">{option.label}</div>
+                <div className="mt-1 text-sm leading-6" style={{ color: 'var(--muted)' }}>{option.description}</div>
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
             {quizTypeOptions.map((option) => (
               <button
                 className={quizType === option.value ? 'rounded-lg border p-4 text-left' : 'rounded-lg border p-4 text-left transition hover:-translate-y-0.5'}
@@ -384,6 +408,26 @@ export function QuizPage() {
       )}
     </>
   );
+}
+
+async function loadQuestionPool(token: string, source: QuizSource, questionCount: number) {
+  const limit = Math.max(questionCount, 12);
+
+  if (source === 'review') return uniqueStudyItems(await getTodayReview(token, limit));
+  if (source === 'new') return uniqueStudyItems(await getNewStudy(token, limit));
+  if (source === 'mistakes') return uniqueStudyItems((await getMistakes(token)).slice(0, limit));
+  if (source === 'favorites') {
+    const result = await getFavoritesPaginated(token, 1, limit);
+    return uniqueStudyItems(result.items);
+  }
+
+  const [reviews, news, mistakes, favorites] = await Promise.all([
+    getTodayReview(token, limit),
+    getNewStudy(token, limit),
+    getMistakes(token),
+    getFavoritesPaginated(token, 1, Math.min(8, limit)).then((result) => result.items).catch(() => []),
+  ]);
+  return uniqueStudyItems([...reviews, ...mistakes.slice(0, 10), ...favorites, ...news]);
 }
 
 function ChoiceQuestion({

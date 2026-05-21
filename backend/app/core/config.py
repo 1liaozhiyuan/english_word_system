@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24 * 7
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     reset_token_expire_minutes: int = 60
+    expose_reset_token_in_response: bool = True
     openai_api_key: str = ""
     ai_model: str = "gpt-4o-mini"
     ai_base_url: str = "https://api.openai.com/v1"

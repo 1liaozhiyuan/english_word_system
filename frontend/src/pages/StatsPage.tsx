@@ -1,8 +1,8 @@
 import React from 'react';
-import { AlertTriangle, BarChart3, CheckCircle2, Download, Flame, Search, Target } from 'lucide-react';
+import { AlertTriangle, BarChart3, CheckCircle2, Download, Flame, Search, Target, Upload } from 'lucide-react';
 import { getErrorMessage } from '../api/client';
 import { getStatsOverview } from '../api/stats';
-import { exportUserData, getStudyHistoryPaginated } from '../api/study';
+import { exportAnkiData, exportUserData, getStudyHistoryPaginated, importUserData } from '../api/study';
 import { useAuth } from '../auth/AuthContext';
 import { ListSkeleton } from '../components/ListSkeleton';
 import { LoadingState } from '../components/LoadingState';
@@ -38,6 +38,7 @@ export function StatsPage() {
   const [historyTotalPages, setHistoryTotalPages] = React.useState(1);
   const [historyTotal, setHistoryTotal] = React.useState(0);
   const [isHistoryLoading, setIsHistoryLoading] = React.useState(false);
+  const importInputRef = React.useRef<HTMLInputElement | null>(null);
 
   async function loadHistory(nextPage = 1, append = false, keyword = historyQuery) {
     setIsHistoryLoading(true);
@@ -84,6 +85,38 @@ export function StatsPage() {
     }
   }
 
+  async function handleExportAnkiData() {
+    try {
+      const blob = await exportAnkiData(token);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `english-word-anki-${new Date().toISOString().slice(0, 10)}.tsv`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+      setMessage('Anki 导入文件已导出。');
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleImportData(file: File | undefined) {
+    if (!file) return;
+    try {
+      const result = await importUserData(token, file);
+      const nextStats = await getStatsOverview(token);
+      setStats(nextStats);
+      await loadHistory(1, false, historyQuery);
+      setMessage(
+        `数据已恢复：进度 ${result.progress_imported} 条，记录 ${result.logs_imported} 条，收藏 ${result.favorites_imported} 条。`,
+      );
+    } catch (error) {
+      setMessage(getErrorMessage(error));
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = '';
+    }
+  }
+
   async function handleLoadMoreHistory() {
     if (historyPage >= historyTotalPages || isHistoryLoading) return;
     await loadHistory(historyPage + 1, true).catch((error) => setMessage(getErrorMessage(error)));
@@ -97,10 +130,27 @@ export function StatsPage() {
         title="学习数据"
         description="这里不只展示数字，也帮助你判断当前学习节奏是否健康。历史记录会按需加载。"
         action={
-          <button className="button-secondary" onClick={handleExportData} type="button">
-            <Download size={16} />
-            导出学习数据
-          </button>
+          <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-3">
+            <button className="button-secondary" onClick={() => importInputRef.current?.click()} type="button">
+              <Upload size={16} />
+              恢复数据
+            </button>
+            <button className="button-secondary" onClick={handleExportAnkiData} type="button">
+              <Download size={16} />
+              Anki
+            </button>
+            <button className="button-secondary" onClick={handleExportData} type="button">
+              <Download size={16} />
+              导出数据
+            </button>
+            <input
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(event) => handleImportData(event.target.files?.[0])}
+              ref={importInputRef}
+              type="file"
+            />
+          </div>
         }
       />
       <Message>{message}</Message>

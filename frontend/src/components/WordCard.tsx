@@ -5,7 +5,7 @@ import { getErrorMessage } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { AIResultPanel } from './AIResultPanel';
 import { FavoriteButton } from './FavoriteButton';
-import type { StudyItem, StudyMode } from '../types';
+import type { SpeechAccent, StudyItem, StudyMode } from '../types';
 
 export function WordCard({
   item,
@@ -13,6 +13,7 @@ export function WordCard({
   autoPlayWord = true,
   autoPlayExample = true,
   autoRevealAfterAudio = false,
+  speechAccent = 'en-US',
   isSubmitting = false,
   isWaitingNext = false,
   onAnswer,
@@ -23,6 +24,7 @@ export function WordCard({
   autoPlayWord?: boolean;
   autoPlayExample?: boolean;
   autoRevealAfterAudio?: boolean;
+  speechAccent?: SpeechAccent;
   isSubmitting?: boolean;
   isWaitingNext?: boolean;
   onAnswer: (quality: number) => void | Promise<void>;
@@ -115,8 +117,10 @@ export function WordCard({
 
   function createUtterance(text: string, onEnd?: () => void) {
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
+    utterance.lang = speechAccent;
     utterance.rate = 0.86;
+    const voice = findVoice(speechAccent);
+    if (voice) utterance.voice = voice;
     if (onEnd) utterance.onend = onEnd;
     return utterance;
   }
@@ -427,6 +431,15 @@ export function WordCard({
   }
 }
 
+function findVoice(lang: SpeechAccent) {
+  if (!window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  return voices.find((voice) => voice.lang === lang)
+    ?? voices.find((voice) => voice.lang.toLowerCase().startsWith(lang.toLowerCase()))
+    ?? voices.find((voice) => voice.lang.toLowerCase().startsWith('en'))
+    ?? null;
+}
+
 function PromptPanel({
   text,
   onReveal,
@@ -496,6 +509,21 @@ function MemoryPanel({
               {formatInterval(item.interval_days)}
             </div>
           </div>
+          <div className="word-meta-cell">
+            <div className="text-xs font-bold" style={{ color: 'var(--muted)' }}>下次复习</div>
+            <div className="mt-1 text-sm font-semibold" style={{ color: 'var(--ink)' }}>
+              {formatNextReview(item.next_review_at)}
+            </div>
+          </div>
+          <div className="word-meta-cell">
+            <div className="text-xs font-bold" style={{ color: 'var(--muted)' }}>记录</div>
+            <div className="mt-1 text-sm font-semibold" style={{ color: 'var(--ink)' }}>
+              对 {item.correct_count} / 错 {item.wrong_count}
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 rounded-lg p-3 text-sm leading-6" style={{ background: 'var(--panel)', color: 'var(--muted)' }}>
+          {getMemoryReason(item)}
         </div>
       </div>
     </aside>
@@ -653,6 +681,27 @@ function formatInterval(value: number) {
   if (value < 1) return `${Math.round(value * 24 * 60)} 分钟`;
   if (value < 30) return `${Math.round(value)} 天`;
   return `${Math.round(value / 30)} 个月`;
+}
+
+function formatNextReview(value: string | null) {
+  if (!value) return '未安排';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '未安排';
+  const diffMs = date.getTime() - Date.now();
+  if (diffMs <= 0) return '现在';
+  const diffMinutes = Math.round(diffMs / 60000);
+  if (diffMinutes < 60) return `${Math.max(1, diffMinutes)} 分钟后`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} 小时后`;
+  return `${Math.round(diffHours / 24)} 天后`;
+}
+
+function getMemoryReason(item: StudyItem) {
+  if (item.is_leech) return '这个词反复出错，系统会把它作为重点难词更频繁地安排复盘。';
+  if (item.status === 'new') return '这是新词，第一次回答会决定它进入短间隔学习还是直接拉长复习间隔。';
+  if (item.wrong_count > item.correct_count) return '错误次数偏多，系统会缩短间隔，先稳住记忆再放远复习。';
+  if (item.mastery_level >= 5) return '掌握度较高，答对后复习间隔会明显拉长。';
+  return '系统根据你的掌握度、间隔和最近回答结果安排这次复习。';
 }
 
 function getFeedbackTone(quality: number) {

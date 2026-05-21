@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.models import ProgressStatus, StudyMode
+from app.models import ProgressStatus, SpeechAccent, StudyMode
 
 
 class TokenResponse(BaseModel):
@@ -29,6 +29,11 @@ class PasswordReset(BaseModel):
     new_password: str = Field(min_length=6)
 
 
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6)
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -46,6 +51,7 @@ class UserSettingsRead(BaseModel):
     auto_play_example: bool = True
     auto_reveal_after_audio: bool = False
     auto_advance: bool = True
+    speech_accent: SpeechAccent = SpeechAccent.us
     answer_delay_ms: int = 800
     word_book_page_size: int = 30
 
@@ -58,6 +64,7 @@ class UserSettingsUpdate(BaseModel):
     auto_play_example: bool | None = None
     auto_reveal_after_audio: bool | None = None
     auto_advance: bool | None = None
+    speech_accent: SpeechAccent | None = None
     answer_delay_ms: int | None = Field(default=None, ge=300, le=3000)
     word_book_page_size: int | None = Field(default=None, ge=10, le=100)
 
@@ -258,6 +265,13 @@ class PaginatedResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class DataImportResult(BaseModel):
+    progress_imported: int = 0
+    logs_imported: int = 0
+    favorites_imported: int = 0
+    settings_imported: bool = False
 
 
 class BatchDeleteWords(BaseModel):

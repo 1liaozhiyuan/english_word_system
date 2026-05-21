@@ -1,12 +1,13 @@
 import React from 'react';
-import { BookOpen, CheckCircle2, FastForward, Gauge, Headphones, RotateCcw, Save, Target, Timer, Volume2 } from 'lucide-react';
+import { BookOpen, CheckCircle2, FastForward, Gauge, Headphones, KeyRound, RotateCcw, Save, Target, Timer, Volume2 } from 'lucide-react';
+import { changePassword } from '../api/auth';
 import { getErrorMessage } from '../api/client';
 import { getSettings, updateSettings } from '../api/settings';
 import { getStatsOverview } from '../api/stats';
 import { useAuth } from '../auth/AuthContext';
 import { Message } from '../components/Message';
 import { PageHeader } from '../components/PageHeader';
-import type { Stats, StudyMode, UserSettings } from '../types';
+import type { SpeechAccent, Stats, StudyMode, UserSettings } from '../types';
 
 const studyModes: { mode: StudyMode; label: string; description: string }[] = [
   { mode: 'en_to_cn', label: '英译中', description: '看英文回忆中文释义，适合新词入门。' },
@@ -21,6 +22,11 @@ const presets = [
   { key: 'intense', label: '强化', newLimit: 20, reviewLimit: 50, description: '适合备考冲刺，但需要保证复习时间。' },
 ];
 
+const speechAccents: { value: SpeechAccent; label: string; description: string }[] = [
+  { value: 'en-US', label: '美音', description: '适合多数词典与考试材料，发音更圆润。' },
+  { value: 'en-GB', label: '英音', description: '适合英式材料和听力辨音训练。' },
+];
+
 export function SettingsPage() {
   const { token } = useAuth();
   const [settings, setSettings] = React.useState<UserSettings>({
@@ -31,12 +37,15 @@ export function SettingsPage() {
     auto_play_example: true,
     auto_reveal_after_audio: false,
     auto_advance: true,
+    speech_accent: 'en-US',
     answer_delay_ms: 800,
     word_book_page_size: 30,
   });
   const [stats, setStats] = React.useState<Stats | null>(null);
   const [message, setMessage] = React.useState<{ text: string; tone: 'success' | 'error' | 'info' }>({ text: '', tone: 'success' });
   const [isSaving, setIsSaving] = React.useState(false);
+  const [passwordForm, setPasswordForm] = React.useState({ current: '', next: '', confirm: '' });
+  const [isPasswordSaving, setIsPasswordSaving] = React.useState(false);
 
   React.useEffect(() => {
     Promise.all([getSettings(token), getStatsOverview(token)])
@@ -69,6 +78,27 @@ export function SettingsPage() {
       daily_review_limit: preset.reviewLimit,
     });
     setMessage({ text: `已应用“${preset.label}”节奏，保存后生效。`, tone: 'info' });
+  }
+
+  async function handleChangePassword() {
+    if (!passwordForm.current || !passwordForm.next || !passwordForm.confirm) {
+      setMessage({ text: '请完整填写当前密码和新密码。', tone: 'error' });
+      return;
+    }
+    if (passwordForm.next !== passwordForm.confirm) {
+      setMessage({ text: '两次输入的新密码不一致。', tone: 'error' });
+      return;
+    }
+    setIsPasswordSaving(true);
+    try {
+      await changePassword(token, passwordForm.current, passwordForm.next);
+      setPasswordForm({ current: '', next: '', confirm: '' });
+      setMessage({ text: '密码已修改，下次登录请使用新密码。', tone: 'success' });
+    } catch (error) {
+      setMessage({ text: getErrorMessage(error), tone: 'error' });
+    } finally {
+      setIsPasswordSaving(false);
+    }
   }
 
   const recommendation = getPlanRecommendation(settings, stats);
@@ -231,6 +261,28 @@ export function SettingsPage() {
             </div>
 
             <div className="grid gap-3">
+              <div className="grid gap-3 md:grid-cols-2">
+                {speechAccents.map((accent) => (
+                  <button
+                    className={settings.speech_accent === accent.value ? 'rounded-lg border p-4 text-left' : 'rounded-lg border p-4 text-left transition hover:-translate-y-0.5'}
+                    key={accent.value}
+                    onClick={() => setSettings({ ...settings, speech_accent: accent.value })}
+                    style={{
+                      borderColor: settings.speech_accent === accent.value ? 'var(--green)' : 'var(--line)',
+                      background: settings.speech_accent === accent.value ? 'var(--green-soft)' : 'var(--paper)',
+                    }}
+                    type="button"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-semibold">{accent.label}</span>
+                      {settings.speech_accent === accent.value && <CheckCircle2 size={18} style={{ color: 'var(--green)' }} />}
+                    </div>
+                    <p className="mt-2 text-sm leading-6" style={{ color: 'var(--muted)' }}>
+                      {accent.description}
+                    </p>
+                  </button>
+                ))}
+              </div>
               <ToggleRow
                 checked={settings.auto_play_word}
                 icon={<Volume2 size={18} />}
@@ -255,6 +307,7 @@ export function SettingsPage() {
             <div className="mt-4 grid gap-3">
               <PreviewMetric label="预计用时" value={`${estimatedMinutes} 分钟`} />
               <PreviewMetric label="默认模式" value={selectedMode.label} />
+              <PreviewMetric label="发音口音" value={formatSpeechAccent(settings.speech_accent)} />
               <PreviewMetric label="答题停留" value={formatDelay(settings.answer_delay_ms)} />
               <PreviewMetric label="词书分页" value={`${settings.word_book_page_size} 个/页`} />
               <PreviewMetric label="今日待处理" value={`${stats?.due_today ?? 0} 个`} />
@@ -275,6 +328,46 @@ export function SettingsPage() {
               <Save size={16} />
               {isSaving ? '保存中...' : '保存学习计划'}
             </button>
+          </section>
+
+          <section className="surface rounded-lg p-5">
+            <div className="flex items-center gap-2">
+              <KeyRound size={20} style={{ color: 'var(--green)' }} />
+              <h3 className="text-xl font-semibold">账号安全</h3>
+            </div>
+            <p className="mt-2 text-sm leading-6" style={{ color: 'var(--muted)' }}>
+              修改当前账号密码。保存学习计划和修改密码互不影响。
+            </p>
+            <div className="mt-4 grid gap-3">
+              <input
+                autoComplete="current-password"
+                className="input"
+                onChange={(event) => setPasswordForm({ ...passwordForm, current: event.target.value })}
+                placeholder="当前密码"
+                type="password"
+                value={passwordForm.current}
+              />
+              <input
+                autoComplete="new-password"
+                className="input"
+                onChange={(event) => setPasswordForm({ ...passwordForm, next: event.target.value })}
+                placeholder="新密码，至少 6 位"
+                type="password"
+                value={passwordForm.next}
+              />
+              <input
+                autoComplete="new-password"
+                className="input"
+                onChange={(event) => setPasswordForm({ ...passwordForm, confirm: event.target.value })}
+                placeholder="再次输入新密码"
+                type="password"
+                value={passwordForm.confirm}
+              />
+              <button className="button-secondary w-full justify-center" disabled={isPasswordSaving} onClick={handleChangePassword} type="button">
+                <KeyRound size={16} />
+                {isPasswordSaving ? '修改中...' : '修改密码'}
+              </button>
+            </div>
           </section>
         </aside>
       </form>
@@ -426,6 +519,7 @@ function PreviewMetric({ label, value }: { label: string; value: string }) {
 function sanitizeSettings(settings: UserSettings) {
   return {
     ...settings,
+    speech_accent: settings.speech_accent ?? 'en-US',
     daily_new_limit: clampNumber(settings.daily_new_limit, 1, 100),
     daily_review_limit: clampNumber(settings.daily_review_limit, 1, 200),
     answer_delay_ms: clampNumber(settings.answer_delay_ms, 300, 3000),
@@ -448,6 +542,10 @@ function formatDelay(value: number) {
   if (value <= 500) return '快';
   if (value <= 900) return '标准';
   return '慢';
+}
+
+function formatSpeechAccent(value: SpeechAccent) {
+  return value === 'en-GB' ? '英音' : '美音';
 }
 
 function isPresetActive(settings: UserSettings, preset: (typeof presets)[number]) {
