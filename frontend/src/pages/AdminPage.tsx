@@ -364,6 +364,37 @@ function AIUsagePanel({ usage }: { usage: AdminAIUsageResponse | null }) {
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {(usage?.feature_summary ?? []).map((item) => <Mini key={item.feature} label={item.feature} value={item.count} />)}
       </div>
+      {(usage?.latest_mistake_analyses.length ?? 0) > 0 && (
+        <div className="mb-5 rounded-lg border p-4" style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+          <h3 className="font-semibold">最近 AI 错因分析</h3>
+          <div className="mt-3 grid gap-2">
+            {usage?.latest_mistake_analyses.map((item) => (
+              <details className="rounded-lg border p-3" key={item.id} style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
+                <summary className="cursor-pointer text-sm font-bold">
+                  {item.user_email} · {formatDate(item.created_at)} · {item.word_count} 个错词
+                </summary>
+                <p className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap text-sm leading-6" style={{ color: 'var(--muted)' }}>{item.content}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      )}
+      {(usage?.latest_questions.length ?? 0) > 0 && (
+        <div className="mb-5 rounded-lg border p-4" style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+          <h3 className="font-semibold">最近入库 AI 题目</h3>
+          <div className="mt-3 grid gap-2">
+            {usage?.latest_questions.map((item) => (
+              <details className="rounded-lg border p-3" key={item.id} style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
+                <summary className="cursor-pointer text-sm font-bold">
+                  #{item.id} · {item.type} · {item.related_word || '未关联单词'} · {formatDate(item.created_at)}
+                </summary>
+                <p className="mt-2 text-sm leading-6" style={{ color: 'var(--muted)' }}>{item.prompt}</p>
+                <p className="mt-1 text-sm font-semibold" style={{ color: 'var(--green)' }}>答案：{item.answer}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid gap-3">
         {(usage?.items ?? []).map((item) => (
           <RowCard key={item.id}>

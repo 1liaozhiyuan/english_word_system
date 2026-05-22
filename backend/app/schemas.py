@@ -126,6 +126,15 @@ class WordRead(BaseModel):
     example_sentence: str | None
     example_translation: str | None
     note: str | None = None
+    english_definition: str | None = None
+    root_affix: str | None = None
+    collocations: str | None = None
+    synonyms: str | None = None
+    antonyms: str | None = None
+    word_family: str | None = None
+    confusing_words: str | None = None
+    exam_tags: str | None = None
+    difficulty_tag: str | None = None
 
 
 class WordCreate(BaseModel):
@@ -136,6 +145,15 @@ class WordCreate(BaseModel):
     example_sentence: str | None = None
     example_translation: str | None = None
     note: str | None = None
+    english_definition: str | None = None
+    root_affix: str | None = None
+    collocations: str | None = None
+    synonyms: str | None = None
+    antonyms: str | None = None
+    word_family: str | None = None
+    confusing_words: str | None = None
+    exam_tags: str | None = None
+    difficulty_tag: str | None = None
 
 
 class WordUpdate(BaseModel):
@@ -146,6 +164,15 @@ class WordUpdate(BaseModel):
     example_sentence: str | None = None
     example_translation: str | None = None
     note: str | None = None
+    english_definition: str | None = None
+    root_affix: str | None = None
+    collocations: str | None = None
+    synonyms: str | None = None
+    antonyms: str | None = None
+    word_family: str | None = None
+    confusing_words: str | None = None
+    exam_tags: str | None = None
+    difficulty_tag: str | None = None
 
 
 class WordBookRead(BaseModel):
@@ -241,9 +268,11 @@ class StudyItem(BaseModel):
     interval_days: float = 0
     correct_count: int = 0
     wrong_count: int = 0
+    last_mistake_type: str | None = None
     last_reviewed_at: datetime | None = None
     next_review_at: datetime | None = None
     is_leech: bool = False
+    mistake_type: str | None = None
     is_favorite: bool = False
     word: WordRead
 
@@ -273,6 +302,7 @@ class ReviewLogRead(BaseModel):
     quality: int
     is_correct: bool
     study_mode: StudyMode
+    mistake_type: str | None = None
     created_at: datetime
 
 
@@ -459,6 +489,7 @@ class LearningReportFocusRead(BaseModel):
     wrong_count: int
     correct_count: int
     mastery_level: int
+    mistake_type: str | None = None
 
 
 class LearningReportRead(BaseModel):
@@ -480,6 +511,8 @@ class LearningReportRead(BaseModel):
     weaknesses: list[str]
     recommendations: list[str]
     focus_words: list[LearningReportFocusRead]
+    weak_question_types: list[str] = []
+    suggested_review_count: int = 0
     activity: list[DailyActivity]
 
 
@@ -516,6 +549,21 @@ class AIQuizPayload(BaseModel):
 
 class AITextResponse(BaseModel):
     content: str
+
+
+class AIMistakeAnalysisCreate(BaseModel):
+    word_ids: list[int] = Field(default_factory=list, max_length=50)
+    content: str = Field(min_length=1, max_length=12000)
+    source: str = Field(default="ai", max_length=30)
+
+
+class AIMistakeAnalysisRead(BaseModel):
+    id: int
+    word_ids: list[int]
+    word_count: int
+    content: str
+    source: str
+    created_at: datetime
 
 
 class AISavedExampleCreate(BaseModel):
@@ -659,3 +707,25 @@ class ReadingProgressRead(BaseModel):
     article_id: int
     completed_at: datetime
     reading_seconds: int
+
+
+class WritingPromptRead(BaseModel):
+    prompt: str
+    keyword: str | None = None
+    meaning: str | None = None
+
+
+class WritingSubmissionCreate(BaseModel):
+    prompt: str = Field(min_length=1, max_length=1000)
+    content: str = Field(min_length=1, max_length=5000)
+
+
+class WritingSubmissionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    prompt: str
+    content: str
+    score: int
+    feedback: str
+    created_at: datetime

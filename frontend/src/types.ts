@@ -15,6 +15,15 @@ export type Word = {
   example_sentence: string | null;
   example_translation: string | null;
   note: string | null;
+  english_definition: string | null;
+  root_affix: string | null;
+  collocations: string | null;
+  synonyms: string | null;
+  antonyms: string | null;
+  word_family: string | null;
+  confusing_words: string | null;
+  exam_tags: string | null;
+  difficulty_tag: string | null;
 };
 
 export type WordPayload = {
@@ -25,6 +34,15 @@ export type WordPayload = {
   example_sentence?: string | null;
   example_translation?: string | null;
   note?: string | null;
+  english_definition?: string | null;
+  root_affix?: string | null;
+  collocations?: string | null;
+  synonyms?: string | null;
+  antonyms?: string | null;
+  word_family?: string | null;
+  confusing_words?: string | null;
+  exam_tags?: string | null;
+  difficulty_tag?: string | null;
 };
 
 export type StudyItem = {
@@ -36,6 +54,7 @@ export type StudyItem = {
   interval_days: number;
   correct_count: number;
   wrong_count: number;
+  last_mistake_type: string | null;
   last_reviewed_at: string | null;
   next_review_at: string | null;
   is_leech: boolean;
@@ -51,6 +70,7 @@ export type WordProgress = {
   interval_days: number;
   correct_count: number;
   wrong_count: number;
+  last_mistake_type: string | null;
   last_reviewed_at: string | null;
   next_review_at: string | null;
   is_leech: boolean;
@@ -69,6 +89,7 @@ export type ReviewLogItem = {
   quality: number;
   is_correct: boolean;
   study_mode: StudyMode;
+  mistake_type: string | null;
   created_at: string;
 };
 
@@ -80,6 +101,7 @@ export type AnswerResult = {
   interval_days: number;
   next_review_at: string;
   is_leech: boolean;
+  mistake_type: string | null;
 };
 
 export type DailyActivity = {
@@ -260,6 +282,15 @@ export type CSVPreviewWord = {
   example_sentence: string | null;
   example_translation: string | null;
   note: string | null;
+  english_definition: string | null;
+  root_affix: string | null;
+  collocations: string | null;
+  synonyms: string | null;
+  antonyms: string | null;
+  word_family: string | null;
+  confusing_words: string | null;
+  exam_tags: string | null;
+  difficulty_tag: string | null;
   duplicate_in_file: boolean;
   duplicate_in_database: boolean;
 };
@@ -339,6 +370,7 @@ export type LearningReportFocusWord = {
   wrong_count: number;
   correct_count: number;
   mastery_level: number;
+  mistake_type: string | null;
 };
 
 export type LearningReport = {
@@ -360,6 +392,8 @@ export type LearningReport = {
   weaknesses: string[];
   recommendations: string[];
   focus_words: LearningReportFocusWord[];
+  weak_question_types: string[];
+  suggested_review_count: number;
   activity: DailyActivity[];
 };
 
@@ -369,6 +403,15 @@ export type AISavedExample = {
   sentence: string;
   translation: string | null;
   raw_content: string | null;
+  source: string;
+  created_at: string;
+};
+
+export type AIMistakeAnalysis = {
+  id: number;
+  word_ids: number[];
+  word_count: number;
+  content: string;
   source: string;
   created_at: string;
 };
@@ -460,4 +503,19 @@ export type ReadingProgressResult = {
   article_id: number;
   completed_at: string;
   reading_seconds: number;
+};
+
+export type WritingPrompt = {
+  prompt: string;
+  keyword: string | null;
+  meaning: string | null;
+};
+
+export type WritingSubmission = {
+  id: number;
+  prompt: string;
+  content: string;
+  score: number;
+  feedback: string;
+  created_at: string;
 };

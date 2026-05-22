@@ -60,6 +60,24 @@ export type AdminAIUsage = {
 
 export type AdminAIUsageResponse = PaginatedResponse<AdminAIUsage> & {
   feature_summary: { feature: string; count: number }[];
+  latest_mistake_analyses: {
+    id: number;
+    user_email: string;
+    word_ids: number[];
+    word_count: number;
+    content: string;
+    source: string;
+    created_at: string;
+  }[];
+  latest_questions: {
+    id: number;
+    user_email: string;
+    type: string;
+    prompt: string;
+    answer: string;
+    related_word: string | null;
+    created_at: string;
+  }[];
 };
 
 export async function getAdminOverview(token: string) {

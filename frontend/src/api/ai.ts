@@ -1,5 +1,5 @@
 import { api, getAuthHeaders } from './client';
-import type { AIQuizQuestion, AISavedExample, Word } from '../types';
+import type { AIMistakeAnalysis, AIQuizQuestion, AISavedExample, Word } from '../types';
 
 type StreamHandler = (content: string) => void;
 type StreamOptions = { signal?: AbortSignal };
@@ -38,6 +38,24 @@ export async function analyzeMistakes(token: string, words: Word[], onUpdate?: S
     onUpdate,
     signal: options?.signal,
   });
+}
+
+export async function getMistakeAnalyses(token: string, limit = 10) {
+  const { data } = await api.get<AIMistakeAnalysis[]>('/ai/mistake-analyses', {
+    headers: getAuthHeaders(token),
+    params: { limit },
+  });
+  return data;
+}
+
+export async function saveMistakeAnalysis(
+  token: string,
+  payload: { word_ids: number[]; content: string; source?: string },
+) {
+  const { data } = await api.post<AIMistakeAnalysis>('/ai/mistake-analyses', payload, {
+    headers: getAuthHeaders(token),
+  });
+  return data;
 }
 
 export async function generateQuiz(

@@ -79,6 +79,7 @@ export function LearningReportPage() {
                   <Metric label="累计正确率" value={`${report.correct_rate}%`} />
                   <Metric label="本周正确率" value={`${report.weekly_correct_rate}%`} />
                   <Metric label="掌握率" value={`${report.mastered_rate}%`} />
+                  <Metric label="建议复习量" value={`${report.suggested_review_count} 个`} />
                 </div>
               </div>
             </div>
@@ -96,6 +97,21 @@ export function LearningReportPage() {
             <ReportList title="薄弱点" icon={<AlertTriangle size={20} />} items={report.weaknesses} />
             <ReportList title="建议" icon={<Lightbulb size={20} />} items={report.recommendations} />
           </section>
+          {report.weak_question_types.length > 0 && (
+            <section className="surface mb-5 rounded-lg p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <Target size={20} style={{ color: 'var(--green)' }} />
+                <h3 className="text-xl font-semibold">薄弱题型</h3>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {report.weak_question_types.map((item) => (
+                  <Link className="chip" key={item} style={{ background: 'var(--amber-soft)', color: 'var(--amber)' }} to="/mistakes">
+                    {item}
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="grid gap-5 xl:grid-cols-[1fr_360px]">
             <div className="surface rounded-lg p-5">
@@ -120,6 +136,11 @@ export function LearningReportPage() {
                         错 {word.wrong_count}
                       </span>
                     </div>
+                    {word.mistake_type && (
+                      <p className="mt-2 text-xs font-bold" style={{ color: 'var(--amber)' }}>
+                        最近错误类型：{word.mistake_type}
+                      </p>
+                    )}
                     <div className="mt-3 h-2 overflow-hidden rounded-full" style={{ background: 'var(--paper)' }}>
                       <div className="h-full rounded-full" style={{ width: `${word.mastery_level}%`, background: 'var(--green)' }} />
                     </div>

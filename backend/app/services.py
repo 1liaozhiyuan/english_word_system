@@ -11,6 +11,7 @@ from sqlmodel import Session, func, select
 from app.core.security import generate_reset_token, hash_password, verify_password
 from app.models import (
     AdminOperationLog,
+    AIMistakeAnalysis,
     AIQuestion,
     AIQuestionAttempt,
     AIUsageLog,
@@ -40,6 +41,17 @@ from app.models import (
 LEECH_THRESHOLD = 5
 FREE_DAILY_AI_LIMIT = 5
 MEMBER_DAILY_AI_LIMIT = 100
+
+STUDY_MODE_RULES: dict[StudyMode, dict[str, object]] = {
+    StudyMode.en_to_cn: {"wrong_penalty": 1, "easy_bonus": 2, "mistake_type": "词义混淆"},
+    StudyMode.cn_to_en: {"wrong_penalty": 2, "easy_bonus": 2, "mistake_type": "中英转换错误"},
+    StudyMode.listening: {"wrong_penalty": 2, "easy_bonus": 2, "mistake_type": "听音错误"},
+    StudyMode.spelling: {"wrong_penalty": 3, "easy_bonus": 1, "mistake_type": "拼写错误"},
+}
+
+
+def get_study_mode_rule(study_mode: StudyMode) -> dict[str, object]:
+    return STUDY_MODE_RULES.get(study_mode, STUDY_MODE_RULES[StudyMode.en_to_cn])
 
 
 def _clear_progress_for_book_words(
@@ -206,7 +218,7 @@ def delete_user_account(session: Session, user: User, password: str) -> None:
     if not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
-    for model in (ReviewLog, UserWordProgress, FavoriteWord, UserSettings, Feedback, AIUsageLog, AISavedExample, AIQuestionAttempt, AIQuestion, Notification, Order, SpeakingAttempt, ContentReport, ReadingProgress, WritingSubmission):
+    for model in (ReviewLog, UserWordProgress, FavoriteWord, UserSettings, Feedback, AIUsageLog, AISavedExample, AIMistakeAnalysis, AIQuestionAttempt, AIQuestion, Notification, Order, SpeakingAttempt, ContentReport, ReadingProgress, WritingSubmission):
         for item in session.exec(select(model).where(model.user_id == user.id)).all():
             session.delete(item)
     session.delete(user)
@@ -523,6 +535,56 @@ def delete_ai_example(session: Session, user: User, example_id: int) -> None:
     session.commit()
 
 
+def save_mistake_analysis(
+    session: Session,
+    user: User,
+    word_ids: list[int],
+    content: str,
+    source: str = "ai",
+) -> AIMistakeAnalysis:
+    clean_word_ids = list(dict.fromkeys([word_id for word_id in word_ids if isinstance(word_id, int)]))[:50]
+    item = AIMistakeAnalysis(
+        user_id=user.id,
+        word_ids_json=json.dumps(clean_word_ids, ensure_ascii=False),
+        word_count=len(clean_word_ids),
+        content=content.strip(),
+        source=(source or "ai").strip()[:30],
+    )
+    if not item.content:
+        raise HTTPException(status_code=400, detail="Analysis content is required")
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item
+
+
+def list_mistake_analyses(session: Session, user: User, limit: int = 10) -> list[AIMistakeAnalysis]:
+    limit = min(max(limit, 1), 50)
+    return list(
+        session.exec(
+            select(AIMistakeAnalysis)
+            .where(AIMistakeAnalysis.user_id == user.id)
+            .order_by(AIMistakeAnalysis.created_at.desc())
+            .limit(limit)
+        ).all()
+    )
+
+
+def serialize_mistake_analysis(item: AIMistakeAnalysis) -> dict[str, object]:
+    try:
+        word_ids = json.loads(item.word_ids_json or "[]")
+    except json.JSONDecodeError:
+        word_ids = []
+    return {
+        "id": item.id,
+        "word_ids": [word_id for word_id in word_ids if isinstance(word_id, int)],
+        "word_count": item.word_count,
+        "content": item.content,
+        "source": item.source,
+        "created_at": item.created_at,
+    }
+
+
 def save_ai_questions(session: Session, user: User, questions: list[dict[str, object]]) -> list[dict[str, object]]:
     saved: list[dict[str, object]] = []
     for item in questions:
@@ -560,17 +622,50 @@ def save_ai_questions(session: Session, user: User, questions: list[dict[str, ob
 
 def normalize_answer(value: str) -> str:
     value = value.strip().lower()
-    for prefix in ("a.", "b.", "c.", "d.", "a、", "b、", "c、", "d、"):
+    for prefix in ("a.", "b.", "c.", "d.", "a、", "b、", "c、", "d、", "a ", "b ", "c ", "d "):
         if value.startswith(prefix):
-            return value[len(prefix):].strip()
-    return value
+            value = value[len(prefix):].strip()
+            break
+    for char in "，。！？、,.!?;；:：()[]{}\"“”":
+        value = value.replace(char, "")
+    return " ".join(value.split())
+
+
+def _option_index(value: str) -> int | None:
+    value = value.strip().lower()
+    if len(value) == 1 and value in "abcd":
+        return ord(value) - ord("a")
+    if len(value) >= 2 and value[0] in "abcd" and value[1] in ".、 ":
+        return ord(value[0]) - ord("a")
+    return None
+
+
+def ai_answer_matches(question: AIQuestion, answer: str) -> bool:
+    try:
+        options = json.loads(question.options_json or "[]")
+    except json.JSONDecodeError:
+        options = []
+    if not isinstance(options, list):
+        options = []
+
+    def resolve(value: str) -> str:
+        index = _option_index(value)
+        if index is not None and 0 <= index < len(options):
+            return str(options[index])
+        normalized = normalize_answer(value)
+        for option in options:
+            if normalize_answer(str(option)) == normalized:
+                return str(option)
+        return value
+
+    return normalize_answer(resolve(answer)) == normalize_answer(resolve(question.answer))
 
 
 def record_ai_question_attempt(session: Session, user: User, question_id: int, answer: str) -> AIQuestionAttempt:
     question = session.get(AIQuestion, question_id)
     if not question or question.user_id != user.id:
         raise HTTPException(status_code=404, detail="AI question not found")
-    is_correct = normalize_answer(answer) == normalize_answer(question.answer)
+    is_correct = ai_answer_matches(question, answer)
     attempt = AIQuestionAttempt(
         user_id=user.id,
         question_id=question.id,
@@ -591,12 +686,17 @@ def record_ai_question_attempt(session: Session, user: User, question_id: int, a
             progress = UserWordProgress(user_id=user.id, word_id=question.word_id)
             session.add(progress)
             session.commit()
+        study_mode = StudyMode.en_to_cn
+        if question.question_type == "spelling":
+            study_mode = StudyMode.spelling
+        elif question.question_type == "blank":
+            study_mode = StudyMode.cn_to_en
         answer_word(
             session,
             user,
             question.word_id,
             3 if is_correct else 0,
-            StudyMode.en_to_cn,
+            study_mode,
             progress.word_book_id,
         )
     return attempt
@@ -1046,6 +1146,22 @@ def list_admin_ai_usage(session: Session, page: int = 1, page_size: int = 20) ->
             .order_by(func.count(AIUsageLog.id).desc())
         ).all()
     )
+    analysis_rows = list(
+        session.exec(
+            select(AIMistakeAnalysis, User)
+            .join(User, User.id == AIMistakeAnalysis.user_id)
+            .order_by(AIMistakeAnalysis.created_at.desc())
+            .limit(8)
+        ).all()
+    )
+    question_rows = list(
+        session.exec(
+            select(AIQuestion, User)
+            .join(User, User.id == AIQuestion.user_id)
+            .order_by(AIQuestion.created_at.desc())
+            .limit(10)
+        ).all()
+    )
     return {
         "items": [
             {
@@ -1060,6 +1176,25 @@ def list_admin_ai_usage(session: Session, page: int = 1, page_size: int = 20) ->
         "feature_summary": [
             {"feature": feature, "count": count}
             for feature, count in feature_rows
+        ],
+        "latest_mistake_analyses": [
+            {
+                **serialize_mistake_analysis(item),
+                "user_email": user.email,
+            }
+            for item, user in analysis_rows
+        ],
+        "latest_questions": [
+            {
+                "id": question.id,
+                "user_email": user.email,
+                "type": question.question_type,
+                "prompt": question.prompt,
+                "answer": question.answer,
+                "related_word": question.related_word,
+                "created_at": question.created_at,
+            }
+            for question, user in question_rows
         ],
         "total": total,
         "page": page,
@@ -1781,17 +1916,27 @@ def export_word_book_csv(session: Session, word_book_id: int) -> str:
         ).all()
     )
     output = io.StringIO()
+    word_csv_fields = [
+        "word",
+        "phonetic",
+        "meaning",
+        "part_of_speech",
+        "example_sentence",
+        "example_translation",
+        "note",
+        "english_definition",
+        "root_affix",
+        "collocations",
+        "synonyms",
+        "antonyms",
+        "word_family",
+        "confusing_words",
+        "exam_tags",
+        "difficulty_tag",
+    ]
     writer = csv.DictWriter(
         output,
-        fieldnames=[
-            "word",
-            "phonetic",
-            "meaning",
-            "part_of_speech",
-            "example_sentence",
-            "example_translation",
-            "note",
-        ],
+        fieldnames=word_csv_fields,
         lineterminator="\n",
     )
     writer.writeheader()
@@ -1805,6 +1950,15 @@ def export_word_book_csv(session: Session, word_book_id: int) -> str:
                 "example_sentence": word.example_sentence or "",
                 "example_translation": word.example_translation or "",
                 "note": word.note or "",
+                "english_definition": word.english_definition or "",
+                "root_affix": word.root_affix or "",
+                "collocations": word.collocations or "",
+                "synonyms": word.synonyms or "",
+                "antonyms": word.antonyms or "",
+                "word_family": word.word_family or "",
+                "confusing_words": word.confusing_words or "",
+                "exam_tags": word.exam_tags or "",
+                "difficulty_tag": word.difficulty_tag or "",
             }
         )
     return output.getvalue()
@@ -1827,6 +1981,15 @@ def add_word_to_book(
         example_sentence=(data.get("example_sentence") or None),
         example_translation=(data.get("example_translation") or None),
         note=(data.get("note") or None),
+        english_definition=(data.get("english_definition") or None),
+        root_affix=(data.get("root_affix") or None),
+        collocations=(data.get("collocations") or None),
+        synonyms=(data.get("synonyms") or None),
+        antonyms=(data.get("antonyms") or None),
+        word_family=(data.get("word_family") or None),
+        confusing_words=(data.get("confusing_words") or None),
+        exam_tags=(data.get("exam_tags") or None),
+        difficulty_tag=(data.get("difficulty_tag") or None),
     )
     if not word.text or not word.meaning:
         raise HTTPException(status_code=400, detail="Word and meaning are required")
@@ -1857,6 +2020,15 @@ def update_word(session: Session, word_id: int, data: dict[str, str | None]) -> 
         "example_sentence",
         "example_translation",
         "note",
+        "english_definition",
+        "root_affix",
+        "collocations",
+        "synonyms",
+        "antonyms",
+        "word_family",
+        "confusing_words",
+        "exam_tags",
+        "difficulty_tag",
     ]:
         if field not in data:
             continue
@@ -2081,6 +2253,15 @@ def parse_word_book_csv(session: Session, content: bytes) -> dict[str, object]:
                 "example_sentence": get_value(row, "example_sentence"),
                 "example_translation": get_value(row, "example_translation"),
                 "note": get_value(row, "note"),
+                "english_definition": get_value(row, "english_definition"),
+                "root_affix": get_value(row, "root_affix"),
+                "collocations": get_value(row, "collocations"),
+                "synonyms": get_value(row, "synonyms"),
+                "antonyms": get_value(row, "antonyms"),
+                "word_family": get_value(row, "word_family"),
+                "confusing_words": get_value(row, "confusing_words"),
+                "exam_tags": get_value(row, "exam_tags"),
+                "difficulty_tag": get_value(row, "difficulty_tag"),
                 "duplicate_in_file": duplicate_in_file,
             }
         )
@@ -2163,6 +2344,15 @@ def import_word_book_from_csv(
                 example_sentence=row["example_sentence"],
                 example_translation=row["example_translation"],
                 note=row["note"],
+                english_definition=row["english_definition"],
+                root_affix=row["root_affix"],
+                collocations=row["collocations"],
+                synonyms=row["synonyms"],
+                antonyms=row["antonyms"],
+                word_family=row["word_family"],
+                confusing_words=row["confusing_words"],
+                exam_tags=row["exam_tags"],
+                difficulty_tag=row["difficulty_tag"],
             )
             session.add(word)
             session.commit()
@@ -2498,6 +2688,10 @@ def answer_word(
 
     now = datetime.utcnow()
     is_correct = quality > 0
+    mode_rule = get_study_mode_rule(study_mode)
+    wrong_penalty = int(mode_rule["wrong_penalty"])
+    easy_bonus = int(mode_rule["easy_bonus"])
+    mistake_type = None if is_correct else str(mode_rule["mistake_type"])
     progress.last_reviewed_at = now
 
     ef = max(1.3, progress.easiness_factor)
@@ -2505,9 +2699,10 @@ def answer_word(
 
     if quality == 0:
         progress.wrong_count += 1
+        progress.last_mistake_type = mistake_type
         progress.consecutive_correct = 0
-        progress.easiness_factor = max(1.3, ef - 0.2)
-        progress.mastery_level = max(0, progress.mastery_level - 1)
+        progress.easiness_factor = max(1.3, ef - (0.12 * wrong_penalty))
+        progress.mastery_level = max(0, progress.mastery_level - wrong_penalty)
         if progress.status == ProgressStatus.new:
             progress.status = ProgressStatus.learning
             interval = 10 / 1440
@@ -2521,6 +2716,8 @@ def answer_word(
     elif quality == 1:
         progress.correct_count += 1
         progress.consecutive_correct += 1
+        if progress.consecutive_correct >= 2:
+            progress.last_mistake_type = None
         progress.easiness_factor = max(1.3, ef - 0.15)
         if progress.status == ProgressStatus.new:
             progress.status = ProgressStatus.learning
@@ -2534,6 +2731,8 @@ def answer_word(
     elif quality == 2:
         progress.correct_count += 1
         progress.consecutive_correct += 1
+        if progress.consecutive_correct >= 2:
+            progress.last_mistake_type = None
         progress.easiness_factor = ef
         if progress.status == ProgressStatus.new:
             progress.status = ProgressStatus.learning
@@ -2553,13 +2752,15 @@ def answer_word(
     else:  # quality == 3
         progress.correct_count += 1
         progress.consecutive_correct += 1
+        if progress.consecutive_correct >= 2:
+            progress.last_mistake_type = None
         progress.easiness_factor = min(3.5, ef + 0.1)
         if progress.status == ProgressStatus.new:
             progress.status = ProgressStatus.learning
             progress.interval_days = 3
             progress.next_review_at = now + timedelta(days=progress.interval_days)
         elif progress.status == ProgressStatus.learning:
-            progress.mastery_level += 2
+            progress.mastery_level += easy_bonus
             if progress.mastery_level >= 5:
                 progress.status = ProgressStatus.mastered
                 progress.interval_days = 30
@@ -2570,7 +2771,7 @@ def answer_word(
                 progress.interval_days = interval
                 progress.next_review_at = now + timedelta(days=interval)
         else:
-            progress.mastery_level += 2
+            progress.mastery_level += easy_bonus
             if progress.mastery_level >= 7:
                 progress.status = ProgressStatus.mastered
                 progress.interval_days = 60
@@ -2594,6 +2795,7 @@ def answer_word(
             study_mode=study_mode,
             quality=quality,
             is_correct=is_correct,
+            mistake_type=mistake_type,
         )
     )
     session.add(progress)
@@ -3072,6 +3274,28 @@ def get_learning_report(session: Session, user: User) -> dict[str, object]:
         key=lambda item: (item.is_leech, item.wrong_count, -item.mastery_level),
         reverse=True,
     )[:6]
+    recent_logs = list(
+        session.exec(
+            select(ReviewLog)
+            .where(ReviewLog.user_id == user.id)
+            .order_by(ReviewLog.created_at.desc())
+            .limit(200)
+        ).all()
+    )
+    mistake_type_counts: dict[str, int] = {}
+    for log in recent_logs:
+        if log.is_correct:
+            continue
+        label = log.mistake_type or str(get_study_mode_rule(log.study_mode)["mistake_type"])
+        mistake_type_counts[label] = mistake_type_counts.get(label, 0) + 1
+    weak_question_types = [
+        f"{label}（{count} 次）"
+        for label, count in sorted(mistake_type_counts.items(), key=lambda item: item[1], reverse=True)[:4]
+    ]
+    suggested_review_count = min(
+        max(int(stats["due_review"]), len(focus_items) * 3, len(weak_question_types) * 5),
+        max(10, int(stats["daily_review_limit"]) + 20),
+    )
 
     strengths: list[str] = []
     weaknesses: list[str] = []
@@ -3096,6 +3320,8 @@ def get_learning_report(session: Session, user: User) -> dict[str, object]:
         weaknesses.append(f"本周正确率为 {stats['weekly_correct_rate']}%，建议放慢新词节奏。")
     if int(stats["total_learning"]) == 0:
         weaknesses.append("还没有加入学习词库，暂时无法形成有效报告。")
+    if weak_question_types:
+        weaknesses.append(f"最近薄弱题型集中在：{'、'.join(weak_question_types[:3])}。")
 
     if int(stats["due_review"]) > 0:
         recommendations.append(f"优先完成 {stats['due_review']} 个到期复习，再学习新词。")
@@ -3103,8 +3329,12 @@ def get_learning_report(session: Session, user: User) -> dict[str, object]:
         recommendations.append(f"今天还可以学习 {stats['due_new']} 个新词，保持计划推进。")
     if focus_items:
         recommendations.append("先处理报告下方的重点错词，连续答对后再扩大新词量。")
+        recommendations.append(f"建议今天安排约 {suggested_review_count} 个复习项，其中至少 {min(len(focus_items), 6)} 个来自错题本。")
     if int(stats["weekly_reviews"]) > 0 and int(stats["weekly_correct_rate"]) < 70:
         recommendations.append("建议使用拼写或听音模式交叉练习，减少只认不熟的问题。")
+    if weak_question_types:
+        top_type = weak_question_types[0].split("（", 1)[0]
+        recommendations.append(f"优先做“{top_type}”专项训练，再回到混合测试确认是否稳定。")
     if not recommendations:
         recommendations.append("当前没有明显积压，可以保持现有学习设置。")
 
@@ -3148,9 +3378,12 @@ def get_learning_report(session: Session, user: User) -> dict[str, object]:
                 "wrong_count": item.wrong_count,
                 "correct_count": item.correct_count,
                 "mastery_level": item.mastery_level,
+                "mistake_type": item.last_mistake_type,
             }
             for item in focus_items
         ],
+        "weak_question_types": weak_question_types,
+        "suggested_review_count": suggested_review_count,
         "activity": stats["monthly_activity"],
     }
 
@@ -3185,6 +3418,7 @@ def export_user_data(session: Session, user: User) -> dict:
                 "interval_days": p.interval_days,
                 "correct_count": p.correct_count,
                 "wrong_count": p.wrong_count,
+                "last_mistake_type": p.last_mistake_type,
                 "is_leech": p.is_leech,
                 "last_reviewed_at": p.last_reviewed_at.isoformat() if p.last_reviewed_at else None,
                 "next_review_at": p.next_review_at.isoformat() if p.next_review_at else None,
@@ -3197,6 +3431,7 @@ def export_user_data(session: Session, user: User) -> dict:
             "quality": log.quality,
             "is_correct": log.is_correct,
             "study_mode": log.study_mode.value,
+            "mistake_type": log.mistake_type,
             "created_at": log.created_at.isoformat(),
         }
         for log in review_logs
@@ -3340,6 +3575,7 @@ def import_user_data(session: Session, user: User, data: dict) -> dict[str, int 
         progress.interval_days = _safe_float(item.get("interval_days"), 0)
         progress.correct_count = _safe_int(item.get("correct_count"), 0)
         progress.wrong_count = _safe_int(item.get("wrong_count"), 0)
+        progress.last_mistake_type = str(item.get("last_mistake_type") or "") or None
         progress.is_leech = bool(item.get("is_leech", False))
         progress.last_reviewed_at = _parse_datetime(item.get("last_reviewed_at"))
         progress.next_review_at = _parse_datetime(item.get("next_review_at")) or datetime.utcnow()
@@ -3380,6 +3616,7 @@ def import_user_data(session: Session, user: User, data: dict) -> dict[str, int 
                 study_mode=_safe_study_mode(item.get("study_mode")) or StudyMode.en_to_cn,
                 quality=max(0, min(3, _safe_int(item.get("quality"), 0))),
                 is_correct=bool(item.get("is_correct", False)),
+                mistake_type=str(item.get("mistake_type") or "") or None,
                 created_at=created_at,
             )
         )

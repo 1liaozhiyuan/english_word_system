@@ -180,9 +180,20 @@ export function WordDetailPage() {
 
               <div className="mt-8 grid gap-4 md:grid-cols-2">
                 <InfoBlock title="中文释义" value={detail.word.meaning} />
+                <InfoBlock title="英文释义" value={detail.word.english_definition || '暂无英文释义'} />
                 <InfoBlock title="词性" value={detail.word.part_of_speech || '未填写'} />
+                <InfoBlock title="难度与考试" value={[detail.word.difficulty_tag, detail.word.exam_tags].filter(Boolean).join(' · ') || '暂无标签'} />
                 <InfoBlock title="英文例句" value={detail.word.example_sentence || '暂无例句'} />
                 <InfoBlock title="例句翻译" value={detail.word.example_translation || '暂无翻译'} />
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <InfoBlock title="词根词缀" value={detail.word.root_affix || '暂无词根词缀'} />
+                <InfoBlock title="常见搭配" value={detail.word.collocations || '暂无搭配'} />
+                <InfoBlock title="同义词" value={detail.word.synonyms || '暂无同义词'} />
+                <InfoBlock title="反义词" value={detail.word.antonyms || '暂无反义词'} />
+                <InfoBlock title="派生词" value={detail.word.word_family || '暂无派生词'} />
+                <InfoBlock title="易混词" value={detail.word.confusing_words || '暂无易混词'} />
               </div>
               {detail.word.note && (
                 <div className="mt-4 rounded-lg border p-4 text-sm leading-7" style={{ borderColor: 'var(--line)', background: 'var(--amber-soft)', color: 'var(--amber)' }}>

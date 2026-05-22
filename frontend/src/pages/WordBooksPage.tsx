@@ -168,8 +168,8 @@ export function WordBooksPage() {
 
   function handleDownloadTemplate() {
     const csv = [
-      'word,phonetic,meaning,part_of_speech,example_sentence,example_translation,note',
-      'abandon,/əˈbændən/,放弃,v.,He abandoned the plan.,他放弃了这个计划。,高频动词',
+      'word,phonetic,meaning,part_of_speech,example_sentence,example_translation,note,english_definition,root_affix,collocations,synonyms,antonyms,word_family,confusing_words,exam_tags,difficulty_tag',
+      'abandon,/əˈbændən/,放弃,v.,He abandoned the plan.,他放弃了这个计划。,高频动词,to leave something or someone,ab + bandon,abandon a plan,give up,keep,abandoned / abandonment,abundant,四级;考研,B1',
     ].join('\n');
     const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);

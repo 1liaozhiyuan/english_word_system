@@ -2,26 +2,10 @@ import React from 'react';
 import {
   AlertTriangle,
   ArrowRight,
-  Award,
-  Bell,
-  BookOpen,
   CalendarCheck,
-  ChartNoAxesColumn,
-  ClipboardCheck,
-  Crown,
-  FileText,
-  Flame,
-  Headphones,
   Library,
-  LifeBuoy,
-  Mic,
-  NotebookTabs,
-  PanelsTopLeft,
-  Route,
   RotateCcw,
-  Settings,
   Sparkles,
-  Star,
   Target,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -100,7 +84,7 @@ export function DashboardPage() {
       {!isLoading && stats && plan && (
         <>
           <section className="dashboard-hero mb-5 rounded-lg p-6">
-            <div className="grid gap-6 lg:grid-cols-[1fr_320px] lg:items-start">
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-[#e6efdf] px-3 py-1 text-xs font-bold text-[#355e3b] dark:bg-[#1e2f1c] dark:text-[#7fb87a]">
@@ -126,6 +110,14 @@ export function DashboardPage() {
                       {plan.secondaryAction}
                     </Link>
                   )}
+                  <Link className="button-secondary" to="/quiz">
+                    进入测试
+                  </Link>
+                </div>
+                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                  <TodayTaskCard label="新词" value={stats.due_new} total={stats.daily_new_limit} to="/study" />
+                  <TodayTaskCard label="复习" value={stats.due_review} total={stats.daily_review_limit} to="/review" />
+                  <TodayTaskCard label="错题" value={stats.mistakes} to="/mistakes" />
                 </div>
               </div>
 
@@ -137,10 +129,14 @@ export function DashboardPage() {
                 <p className="mt-4 text-sm leading-7" style={{ color: 'var(--muted)' }}>
                   {plan.coachNote}
                 </p>
-                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                  <MiniMetric label="新词任务" value={stats.due_new} />
-                  <MiniMetric label="复习任务" value={stats.due_review} />
-                  <MiniMetric label="已完成" value={stats.completed_today} />
+                <div className="mt-4 rounded-lg border p-4" style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold">今日完成率</span>
+                    <span className="text-sm font-bold" style={{ color: 'var(--green)' }}>{todayCompletion}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full" style={{ background: 'var(--panel)' }}>
+                    <div className="h-full rounded-full" style={{ width: `${todayCompletion}%`, background: 'var(--green)' }} />
+                  </div>
                 </div>
               </div>
             </div>
@@ -153,7 +149,7 @@ export function DashboardPage() {
             <StatCard label="今日已完成" value={stats.completed_today} />
           </section>
 
-          <section className="mb-5 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <section className="mb-5 grid gap-4 xl:grid-cols-[1fr_1fr]">
             <div className="surface rounded-lg p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
@@ -194,48 +190,6 @@ export function DashboardPage() {
                 <PlanMetric label="当前词库" value={currentBook?.title ?? '尚未选择词库'} />
                 <PlanMetric label="词库完成率" value={currentBook ? `${currentBook.completion_rate}%` : '0%'} />
               </div>
-            </div>
-          </section>
-
-          <section className="surface mb-5 rounded-lg p-5">
-            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--green)' }}>
-                  Learning Console
-                </p>
-                <h3 className="mt-1 text-2xl font-semibold tracking-normal">常用学习功能</h3>
-              </div>
-              <p className="max-w-xl text-sm leading-6" style={{ color: 'var(--muted)' }}>
-                首页只保留这一组功能入口，避免重复导航。学习、复盘、设置和服务都从这里进入。
-              </p>
-            </div>
-            <div className="feature-group-grid">
-              <FeatureGroup title="学习流程">
-                <FeatureLink icon={<Library size={18} />} label="词库广场" note="选择官方词库或导入自定义词库" to="/word-books" />
-                <FeatureLink icon={<BookOpen size={18} />} label="新词学习" note={`${stats.due_new} 个今日新词`} to="/study" />
-                <FeatureLink icon={<RotateCcw size={18} />} label="今日复习" note={`${stats.due_review} 个到期复习`} to="/review" />
-                <FeatureLink icon={<ClipboardCheck size={18} />} label="专项测试" note="选择题、拼写题和混合测试" to="/quiz" />
-                <FeatureLink icon={<Headphones size={18} />} label="听力训练" note="听音辨义、听写和复习记录" to="/listening" />
-                <FeatureLink icon={<Mic size={18} />} label="口语跟读" note="例句跟读、评分和历史记录" to="/speaking" />
-                <FeatureLink icon={<BookOpen size={18} />} label="阅读训练" note="分级文章、生词和阅读记录" to="/reading" />
-              </FeatureGroup>
-              <FeatureGroup title="复盘与数据">
-                <FeatureLink icon={<NotebookTabs size={18} />} label="错题本" note={`${stats.mistakes} 个需要关注`} to="/mistakes" />
-                <FeatureLink icon={<Star size={18} />} label="收藏单词" note="查看重点词和个人词单" to="/favorites" />
-                <FeatureLink icon={<ChartNoAxesColumn size={18} />} label="学习统计" note="正确率、连续学习和热力图" to="/stats" />
-                <FeatureLink icon={<Award size={18} />} label="打卡激励" note="连续学习、活跃天数和成就徽章" to="/check-in" />
-                <FeatureLink icon={<Flame size={18} />} label="学习报告" note="查看阶段表现和薄弱点" to="/learning-report" />
-              </FeatureGroup>
-              <FeatureGroup title="设置与服务">
-                <FeatureLink icon={<Route size={18} />} label="学习计划" note="查看完成率、目标日期和风险提醒" to="/learning-plan" />
-                <FeatureLink icon={<Settings size={18} />} label="学习设置" note="每日任务、发音、默认模式" to="/learning-settings" />
-                <FeatureLink icon={<Bell size={18} />} label="消息提醒" note="复习到期、错题和 AI 额度提醒" to="/notifications" />
-                <FeatureLink icon={<Sparkles size={18} />} label="目标引导" note="重新生成个性化计划" to="/onboarding" />
-                <FeatureLink icon={<Crown size={18} />} label="会员权益" note="AI 额度、订阅和套餐说明" to="/membership" />
-                <FeatureLink icon={<LifeBuoy size={18} />} label="反馈客服" note="提交问题和 AI 内容反馈" to="/support" />
-                <FeatureLink icon={<FileText size={18} />} label="协议隐私" note="用户协议、隐私政策和注销说明" to="/legal" />
-                <FeatureLink icon={<PanelsTopLeft size={18} />} label="运营后台" note="用户、词库、订单和内容管理入口" to="/admin" />
-              </FeatureGroup>
             </div>
           </section>
 
@@ -290,47 +244,12 @@ export function DashboardPage() {
   );
 }
 
-  function FeatureGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="feature-group">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h4 className="text-base font-semibold" style={{ color: 'var(--ink)' }}>{title}</h4>
-        <span className="h-px flex-1" style={{ background: 'var(--line)' }} />
-      </div>
-      <div className="feature-group-body">{children}</div>
-    </div>
-  );
-}
-
 function PlanMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border px-4 py-3" style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
       <div className="text-xs font-bold uppercase tracking-[0.12em]" style={{ color: 'var(--muted)' }}>{label}</div>
       <div className="mt-1 truncate text-base font-semibold" style={{ color: 'var(--ink)' }}>{value}</div>
     </div>
-  );
-}
-
-function FeatureLink({
-  icon,
-  label,
-  note,
-  to,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  note: string;
-  to: string;
-}) {
-  return (
-    <Link className="feature-link" to={to}>
-      <span className="feature-link-icon">{icon}</span>
-      <span className="min-w-0">
-        <span className="block font-semibold" style={{ color: 'var(--ink)' }}>{label}</span>
-        <span className="mt-0.5 block truncate text-xs" style={{ color: 'var(--muted)' }}>{note}</span>
-      </span>
-      <ArrowRight className="ml-auto shrink-0 opacity-45" size={15} />
-    </Link>
   );
 }
 
@@ -473,6 +392,18 @@ function ActivityHeatmap({ activity }: { activity: Stats['monthly_activity'] }) 
         <span>多</span>
       </div>
     </div>
+  );
+}
+
+function TodayTaskCard({ label, value, total, to }: { label: string; value: number; total?: number; to: string }) {
+  return (
+    <Link className="rounded-lg border p-4 transition hover:-translate-y-0.5" style={{ borderColor: 'var(--line)', background: 'var(--paper)' }} to={to}>
+      <div className="text-xs font-bold" style={{ color: 'var(--muted)' }}>{label}</div>
+      <div className="mt-2 flex items-end gap-1">
+        <span className="text-3xl font-semibold leading-none" style={{ color: 'var(--ink)' }}>{value}</span>
+        {total !== undefined && <span className="pb-0.5 text-sm font-bold" style={{ color: 'var(--muted)' }}>/ {total}</span>}
+      </div>
+    </Link>
   );
 }
 

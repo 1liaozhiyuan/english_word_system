@@ -106,6 +106,15 @@ class Word(SQLModel, table=True):
     example_sentence: str | None = None
     example_translation: str | None = None
     note: str | None = None
+    english_definition: str | None = None
+    root_affix: str | None = None
+    collocations: str | None = None
+    synonyms: str | None = None
+    antonyms: str | None = None
+    word_family: str | None = None
+    confusing_words: str | None = None
+    exam_tags: str | None = None
+    difficulty_tag: str | None = None
 
     books: list["WordBookItem"] = Relationship(back_populates="word")
     progress: list["UserWordProgress"] = Relationship(back_populates="word")
@@ -141,6 +150,7 @@ class UserWordProgress(SQLModel, table=True):
     interval_days: float = 0
     correct_count: int = 0
     wrong_count: int = 0
+    last_mistake_type: str | None = Field(default=None, index=True)
     consecutive_correct: int = 0
     last_reviewed_at: datetime | None = None
     next_review_at: datetime = Field(default_factory=utc_now, index=True)
@@ -159,6 +169,7 @@ class ReviewLog(SQLModel, table=True):
     study_mode: StudyMode = Field(default=StudyMode.en_to_cn)
     quality: int
     is_correct: bool
+    mistake_type: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utc_now)
 
     word: Word = Relationship()
@@ -192,6 +203,16 @@ class AISavedExample(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now, index=True)
 
     word: Word = Relationship()
+
+
+class AIMistakeAnalysis(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    word_ids_json: str = "[]"
+    word_count: int = Field(default=0, index=True)
+    content: str
+    source: str = Field(default="ai", index=True)
+    created_at: datetime = Field(default_factory=utc_now, index=True)
 
 
 class AdminOperationLog(SQLModel, table=True):

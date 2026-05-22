@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowRight, CheckCircle2, CheckSquare, Clock3, RotateCcw, Search, Sparkles, Square, Target, Trash2 } from 'lucide-react';
-import { analyzeMistakes } from '../api/ai';
+import { analyzeMistakes, getMistakeAnalyses, saveMistakeAnalysis } from '../api/ai';
 import { getErrorMessage } from '../api/client';
 import { getMistakesPaginated, practiceMistake, practiceMistakesBatch, resolveMistake } from '../api/study';
 import { useAuth } from '../auth/AuthContext';
@@ -9,7 +9,7 @@ import { AIResultPanel } from '../components/AIResultPanel';
 import { ListSkeleton } from '../components/ListSkeleton';
 import { Message } from '../components/Message';
 import { PageHeader } from '../components/PageHeader';
-import type { StudyItem } from '../types';
+import type { AIMistakeAnalysis, StudyItem } from '../types';
 
 const PAGE_SIZE = 12;
 
@@ -26,6 +26,7 @@ export function MistakesPage() {
   const [isLoading, setIsLoading] = React.useState(false);
   const [isMutating, setIsMutating] = React.useState(false);
   const [aiAnalysis, setAiAnalysis] = React.useState('');
+  const [analysisHistory, setAnalysisHistory] = React.useState<AIMistakeAnalysis[]>([]);
   const [isAiLoading, setIsAiLoading] = React.useState(false);
   const aiAbortRef = React.useRef<AbortController | null>(null);
 
@@ -45,6 +46,7 @@ export function MistakesPage() {
       setPage(result.page);
       setTotalPages(result.total_pages);
       setTotal(result.total);
+      getMistakeAnalyses(token, 5).then(setAnalysisHistory).catch(() => undefined);
     } catch (error) {
       setMessage(getErrorMessage(error));
     } finally {
@@ -114,7 +116,15 @@ export function MistakesPage() {
     setIsAiLoading(true);
     setAiAnalysis('');
     try {
-      setAiAnalysis(await analyzeMistakes(token, words, setAiAnalysis, { signal: controller.signal }));
+      const content = await analyzeMistakes(token, words, setAiAnalysis, { signal: controller.signal });
+      setAiAnalysis(content);
+      const saved = await saveMistakeAnalysis(token, {
+        word_ids: words.map((word) => word.id),
+        content,
+        source: 'ai',
+      });
+      setAnalysisHistory((current) => [saved, ...current.filter((item) => item.id !== saved.id)].slice(0, 5));
+      setMessage('AI 错因分析已保存到历史记录。');
     } catch (error) {
       if ((error as Error).name !== 'AbortError') {
         setAiAnalysis(getErrorMessage(error));
@@ -192,6 +202,27 @@ export function MistakesPage() {
       />
       <Message>{message}</Message>
       <AIResultPanel title="AI 错词分析" content={aiAnalysis} isLoading={isAiLoading} onStop={stopAI} />
+      {analysisHistory.length > 0 && (
+        <section className="surface mb-5 rounded-lg p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--green)' }}>AI History</p>
+              <h3 className="mt-1 text-xl font-semibold">错因分析历史</h3>
+            </div>
+            <span className="text-sm font-semibold" style={{ color: 'var(--muted)' }}>最近 {analysisHistory.length} 次</span>
+          </div>
+          <div className="mt-4 grid gap-3">
+            {analysisHistory.map((item) => (
+              <details className="rounded-lg border p-4" key={item.id} style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+                <summary className="cursor-pointer text-sm font-bold" style={{ color: 'var(--ink)' }}>
+                  {formatDate(item.created_at)} · 分析 {item.word_count} 个错词
+                </summary>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-7" style={{ color: 'var(--muted)' }}>{item.content}</p>
+              </details>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="surface mb-5 rounded-lg p-5">
         <div className="grid gap-4 lg:grid-cols-[1fr_minmax(260px,420px)] lg:items-center">
@@ -284,6 +315,11 @@ export function MistakesPage() {
                 <MistakeMetric label="正确次数" value={item.correct_count} tone="green" />
                 <MistakeMetric label="掌握度" value={item.mastery_level} />
               </div>
+              {item.last_mistake_type && (
+                <div className="mt-3 rounded-lg border px-3 py-2 text-sm font-semibold" style={{ borderColor: 'var(--line)', background: 'var(--amber-soft)', color: 'var(--amber)' }}>
+                  最近错误类型：{item.last_mistake_type}
+                </div>
+              )}
 
               <div className="mt-4 grid gap-2 text-sm" style={{ color: 'var(--muted)' }}>
                 <div className="flex items-center gap-2">
@@ -306,6 +342,11 @@ export function MistakesPage() {
                   <RotateCcw size={16} />
                   {scheduled ? '已安排' : '安排重练'}
                 </button>
+                {item.last_mistake_type && (
+                  <Link className="button-secondary" to={`/quiz?source=mistakes&mode=${mistakeTypeToMode(item.last_mistake_type)}`}>
+                    专项训练
+                  </Link>
+                )}
                 <button
                   className="button-secondary"
                   disabled={isMutating}
@@ -331,6 +372,13 @@ export function MistakesPage() {
       )}
     </>
   );
+}
+
+function mistakeTypeToMode(type: string) {
+  if (type.includes('拼写')) return 'spelling';
+  if (type.includes('听音')) return 'listening';
+  if (type.includes('中英')) return 'cn_to_en';
+  return 'en_to_cn';
 }
 
 function MiniStat({ label, value }: { label: string; value: number }) {

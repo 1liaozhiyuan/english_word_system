@@ -47,6 +47,15 @@ const emptyForm: WordPayload = {
   example_sentence: '',
   example_translation: '',
   note: '',
+  english_definition: '',
+  root_affix: '',
+  collocations: '',
+  synonyms: '',
+  antonyms: '',
+  word_family: '',
+  confusing_words: '',
+  exam_tags: '',
+  difficulty_tag: '',
 };
 
 const statusText: Record<string, string> = {
@@ -265,6 +274,15 @@ export function WordBookDetailPage() {
       example_sentence: word.example_sentence ?? '',
       example_translation: word.example_translation ?? '',
       note: word.note ?? '',
+      english_definition: word.english_definition ?? '',
+      root_affix: word.root_affix ?? '',
+      collocations: word.collocations ?? '',
+      synonyms: word.synonyms ?? '',
+      antonyms: word.antonyms ?? '',
+      word_family: word.word_family ?? '',
+      confusing_words: word.confusing_words ?? '',
+      exam_tags: word.exam_tags ?? '',
+      difficulty_tag: word.difficulty_tag ?? '',
     });
   }
 
@@ -773,6 +791,16 @@ function WordProgressCard({
               {item.word.part_of_speech}
             </span>
           )}
+          {item.word.difficulty_tag && (
+            <span className="rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--green-soft)', color: 'var(--green)' }}>
+              {item.word.difficulty_tag}
+            </span>
+          )}
+          {item.word.exam_tags && (
+            <span className="rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'var(--blue-soft)', color: 'var(--blue)' }}>
+              {item.word.exam_tags}
+            </span>
+          )}
           <button className="button-secondary" disabled={isMutating} onClick={onEdit} type="button">
             <Pencil size={16} />
             编辑
@@ -785,6 +813,11 @@ function WordProgressCard({
         </div>
       </div>
       <p className="mt-4 break-words text-xl" style={{ color: 'var(--ink)' }}>{item.word.meaning}</p>
+      {item.word.english_definition && (
+        <p className="mt-2 break-words text-sm leading-6" style={{ color: 'var(--muted)' }}>
+          {item.word.english_definition}
+        </p>
+      )}
       {item.word.note && (
         <div className="mt-2 break-words rounded-lg p-3 text-sm leading-6" style={{ background: 'var(--amber-soft)', color: 'var(--amber)' }}>
           笔记：{item.word.note}
@@ -794,6 +827,13 @@ function WordProgressCard({
         <div className="mt-4 break-words rounded-lg p-4 text-sm leading-7" style={{ background: 'var(--panel)', color: 'var(--muted)' }}>
           {item.word.example_sentence && <p>{item.word.example_sentence}</p>}
           {item.word.example_translation && <p>{item.word.example_translation}</p>}
+        </div>
+      )}
+      {(item.word.collocations || item.word.synonyms || item.word.confusing_words) && (
+        <div className="mt-4 grid gap-2 text-sm md:grid-cols-3">
+          {item.word.collocations && <MiniWordMeta label="搭配" value={item.word.collocations} />}
+          {item.word.synonyms && <MiniWordMeta label="同义" value={item.word.synonyms} />}
+          {item.word.confusing_words && <MiniWordMeta label="易混" value={item.word.confusing_words} />}
         </div>
       )}
       <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
@@ -854,13 +894,27 @@ function WordForm({
           <input ref={meaningInputRef} className="input" disabled={disabled} value={value.meaning} onChange={(event) => updateField('meaning', event.target.value)} placeholder="中文释义，必填" />
           <input className="input" disabled={disabled} value={value.phonetic ?? ''} onChange={(event) => updateField('phonetic', event.target.value)} placeholder="音标，可选" />
           <input className="input" disabled={disabled} value={value.part_of_speech ?? ''} onChange={(event) => updateField('part_of_speech', event.target.value)} placeholder="词性，可选" />
+          <input className="input" disabled={disabled} value={value.difficulty_tag ?? ''} onChange={(event) => updateField('difficulty_tag', event.target.value)} placeholder="难度标签，例如 B2 / 考研核心" />
+          <input className="input" disabled={disabled} value={value.exam_tags ?? ''} onChange={(event) => updateField('exam_tags', event.target.value)} placeholder="考试标签，例如 四级、考研、雅思" />
         </div>
       </div>
       <div className="rounded-lg border p-3 sm:p-4" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
         <div className="mb-3 text-sm font-bold" style={{ color: 'var(--green)' }}>例句</div>
         <div className="grid gap-3">
+          <textarea className="input min-h-24" disabled={disabled} value={value.english_definition ?? ''} onChange={(event) => updateField('english_definition', event.target.value)} placeholder="英文释义，适合进阶用户理解语境" />
           <input className="input" disabled={disabled} value={value.example_sentence ?? ''} onChange={(event) => updateField('example_sentence', event.target.value)} placeholder="英文例句，可选" />
           <input className="input" disabled={disabled} value={value.example_translation ?? ''} onChange={(event) => updateField('example_translation', event.target.value)} placeholder="例句翻译，可选" />
+        </div>
+      </div>
+      <div className="rounded-lg border p-3 sm:p-4" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
+        <div className="mb-3 text-sm font-bold" style={{ color: 'var(--green)' }}>用法与辨析</div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <input className="input" disabled={disabled} value={value.root_affix ?? ''} onChange={(event) => updateField('root_affix', event.target.value)} placeholder="词根词缀，例如 sign + ific" />
+          <input className="input" disabled={disabled} value={value.collocations ?? ''} onChange={(event) => updateField('collocations', event.target.value)} placeholder="常见搭配，例如 make significant progress" />
+          <input className="input" disabled={disabled} value={value.synonyms ?? ''} onChange={(event) => updateField('synonyms', event.target.value)} placeholder="同义词，多个可用逗号分隔" />
+          <input className="input" disabled={disabled} value={value.antonyms ?? ''} onChange={(event) => updateField('antonyms', event.target.value)} placeholder="反义词，多个可用逗号分隔" />
+          <input className="input" disabled={disabled} value={value.word_family ?? ''} onChange={(event) => updateField('word_family', event.target.value)} placeholder="派生词，例如 significance / significantly" />
+          <input className="input" disabled={disabled} value={value.confusing_words ?? ''} onChange={(event) => updateField('confusing_words', event.target.value)} placeholder="易混词，例如 similar / sign" />
         </div>
       </div>
       <div className="rounded-lg border p-3 sm:p-4" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
@@ -880,6 +934,15 @@ function SummaryMetric({ label, value }: { label: string; value: number }) {
     <div className="rounded-lg p-4" style={{ background: 'var(--panel)' }}>
       <div className="text-2xl font-semibold" style={{ color: 'var(--ink)' }}>{value}</div>
       <div className="mt-1 text-sm font-semibold" style={{ color: 'var(--muted)' }}>{label}</div>
+    </div>
+  );
+}
+
+function MiniWordMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border px-3 py-2" style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+      <span className="font-semibold" style={{ color: 'var(--muted)' }}>{label}：</span>
+      <span className="break-words" style={{ color: 'var(--ink)' }}>{value}</span>
     </div>
   );
 }
@@ -924,6 +987,15 @@ function normalizePayload(payload: WordPayload): WordPayload {
     example_sentence: payload.example_sentence?.trim() || null,
     example_translation: payload.example_translation?.trim() || null,
     note: payload.note?.trim() || null,
+    english_definition: payload.english_definition?.trim() || null,
+    root_affix: payload.root_affix?.trim() || null,
+    collocations: payload.collocations?.trim() || null,
+    synonyms: payload.synonyms?.trim() || null,
+    antonyms: payload.antonyms?.trim() || null,
+    word_family: payload.word_family?.trim() || null,
+    confusing_words: payload.confusing_words?.trim() || null,
+    exam_tags: payload.exam_tags?.trim() || null,
+    difficulty_tag: payload.difficulty_tag?.trim() || null,
   };
 }
 

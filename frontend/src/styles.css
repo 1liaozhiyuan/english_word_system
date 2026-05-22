@@ -4,15 +4,15 @@
 
 :root {
   color: #17201b;
-  background: #f5f7f1;
+  background: #f6f7f4;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   --ink: #17201b;
-  --muted: #667064;
-  --line: #dce3d5;
+  --muted: #687268;
+  --line: #dfe5dc;
   --paper: #ffffff;
-  --panel: #f2f6ee;
+  --panel: #f4f6f1;
   --green: #256344;
   --green-soft: #e4f1e1;
   --amber: #9b6b2f;
@@ -21,6 +21,10 @@
   --red-soft: #f7dfdf;
   --blue: #35637d;
   --blue-soft: #e0edf3;
+  --violet: #6750a4;
+  --violet-soft: #ede8f7;
+  --cyan: #2f6f73;
+  --cyan-soft: #dff0ef;
   --shadow: 0 16px 36px rgba(37, 55, 35, 0.08);
   --shadow-soft: 0 8px 22px rgba(37, 55, 35, 0.06);
 }
@@ -41,6 +45,10 @@
   --red-soft: #2e1b1b;
   --blue: #83b7d2;
   --blue-soft: #182b35;
+  --violet: #b7a5e8;
+  --violet-soft: #28213a;
+  --cyan: #85c8c4;
+  --cyan-soft: #162f31;
   --shadow: 0 18px 45px rgba(0, 0, 0, 0.22);
   --shadow-soft: 0 8px 20px rgba(0, 0, 0, 0.2);
 }
@@ -84,25 +92,19 @@ html {
 
 .app-shell {
   min-height: 100vh;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 247, 241, 0.98)),
-    repeating-linear-gradient(90deg, rgba(37, 99, 68, 0.035) 0, rgba(37, 99, 68, 0.035) 1px, transparent 1px, transparent 44px),
-    #f5f7f1;
+  background: #f6f7f4;
   color: var(--ink);
 }
 
 .dark .app-shell {
-  background:
-    linear-gradient(180deg, rgba(32, 37, 31, 0.96), rgba(23, 27, 23, 0.99)),
-    repeating-linear-gradient(90deg, rgba(127, 184, 122, 0.045) 0, rgba(127, 184, 122, 0.045) 1px, transparent 1px, transparent 44px),
-    #171b17;
+  background: #171b17;
 }
 
 .surface {
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--paper) 97%, transparent);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(8px);
 }
 
 .dark .surface {
@@ -198,6 +200,80 @@ html {
   transform: translateY(-1px);
 }
 
+.top-app-bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.top-module-nav {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+}
+
+.top-module-link {
+  display: inline-flex;
+  min-height: 42px;
+  min-width: max-content;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 88%, var(--panel));
+  padding: 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 800;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.top-module-link:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--green) 30%, var(--line));
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.top-module-link-active {
+  border-color: color-mix(in srgb, var(--green) 44%, var(--line));
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.back-top-button {
+  position: fixed;
+  right: 18px;
+  bottom: 22px;
+  z-index: 40;
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--green) 32%, var(--line));
+  background: var(--paper);
+  color: var(--green);
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: var(--shadow);
+}
+
+.back-top-button:hover {
+  transform: translateY(-1px);
+}
+
 .button-primary {
   border: 1px solid #204f35;
   background: #204f35;
@@ -252,7 +328,7 @@ html {
 
 .nav-link {
   display: inline-flex;
-  min-height: 42px;
+  min-height: 38px;
   align-items: center;
   gap: 10px;
   border-radius: 8px;
@@ -274,20 +350,40 @@ html {
 }
 
 .nav-link-active {
-  background: color-mix(in srgb, var(--green-soft) 82%, var(--paper));
+  background: color-mix(in srgb, var(--green-soft) 76%, var(--paper));
   color: var(--green);
-  box-shadow: inset 3px 0 0 var(--green), var(--shadow-soft);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+.nav-link-compact {
+  justify-content: flex-start;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 90%, var(--panel));
+}
+
+.nav-group-title {
+  padding: 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.nav-group + .nav-group {
+  padding-top: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
 }
 
 .mobile-nav-link {
   display: flex;
-  min-width: 58px;
-  flex: 0 0 auto;
+  min-width: 0;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
   border-radius: 8px;
+  border: 0;
+  background: transparent;
   padding: 7px 2px;
   color: var(--muted);
   font-size: 11px;
@@ -396,6 +492,25 @@ button:disabled {
     box-shadow 160ms ease;
 }
 
+.surface .surface {
+  box-shadow: none;
+}
+
+textarea.input {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  line-height: 1.6;
+}
+
+select.input {
+  cursor: pointer;
+}
+
+.chip {
+  background: color-mix(in srgb, var(--panel) 84%, var(--paper));
+  color: var(--muted);
+}
+
 .stat-card:hover {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--green) 32%, var(--line));
@@ -407,9 +522,9 @@ button:disabled {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--green) 22%, var(--line));
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--green-soft) 72%, var(--paper)), var(--paper) 58%),
-    linear-gradient(90deg, color-mix(in srgb, var(--amber-soft) 42%, transparent), transparent 46%);
-  box-shadow: 0 24px 54px rgba(35, 48, 34, 0.12);
+    linear-gradient(135deg, color-mix(in srgb, var(--green-soft) 64%, var(--paper)), var(--paper) 58%),
+    linear-gradient(90deg, color-mix(in srgb, var(--blue-soft) 36%, transparent), transparent 46%);
+  box-shadow: 0 18px 38px rgba(35, 48, 34, 0.1);
 }
 
 .dark .dashboard-hero {
@@ -421,7 +536,7 @@ button:disabled {
 
 .feature-group-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 14px;
   align-items: stretch;
 }
@@ -431,7 +546,6 @@ button:disabled {
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--paper) 88%, var(--panel));
   display: flex;
-  height: 360px;
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
@@ -442,7 +556,7 @@ button:disabled {
   display: grid;
   min-height: 0;
   gap: 8px;
-  overflow-y: auto;
+  overflow-y: visible;
   overscroll-behavior: contain;
   padding-right: 4px;
 }

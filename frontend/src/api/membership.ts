@@ -39,3 +39,12 @@ export async function demoPayMembershipOrder(token: string, planId: number) {
   );
   return data;
 }
+
+export async function checkoutMembershipOrder(token: string, planId: number) {
+  const { data } = await api.post<MembershipOrder>(
+    '/membership/orders/checkout',
+    { plan_id: planId },
+    { headers: getAuthHeaders(token) },
+  );
+  return data;
+}

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Bot, CheckCircle2, Crown, FileText, Mic, ReceiptText, ShieldCheck, Sparkles } from 'lucide-react';
 import {
-  demoPayMembershipOrder,
+  checkoutMembershipOrder,
   getMembershipOrders,
   getMembershipPlans,
   getMembershipStatus,
@@ -47,17 +47,17 @@ export function MembershipPage() {
     }
   }
 
-  async function handleDemoPay(planId: number) {
+  async function handleCheckout(planId: number) {
     setPayingPlanId(planId);
     try {
-      await demoPayMembershipOrder(token, planId);
+      await checkoutMembershipOrder(token, planId);
       const [nextStatus, nextOrders] = await Promise.all([
         getMembershipStatus(token),
         getMembershipOrders(token),
       ]);
       setStatus(nextStatus);
       setOrders(nextOrders);
-      setMessage({ text: '已生成演示支付订单，并开通对应会员权益。', tone: 'success' });
+      setMessage({ text: '沙盒订单已支付并开通会员权益。接入应用商店内购后，这里会替换为真实收据校验。', tone: 'success' });
     } catch (error) {
       setMessage({ text: getErrorMessage(error), tone: 'error' });
     } finally {
@@ -73,7 +73,7 @@ export function MembershipPage() {
     <>
       <PageHeader
         title="会员中心"
-        description="会员套餐、订单记录和 AI 额度全部来自数据库，便于后续接入真实内购或第三方支付。"
+        description="会员套餐、订单记录和 AI 额度全部来自数据库。当前使用审核沙盒流程，后续可接入应用商店内购或第三方支付。"
         action={<button className="button-secondary" onClick={loadData} type="button">刷新</button>}
       />
       <Message tone={message.tone}>{message.text}</Message>
@@ -118,11 +118,11 @@ export function MembershipPage() {
             <button
               className={plan.is_recommended ? 'button-primary mt-5 w-full' : 'button-secondary mt-5 w-full'}
               disabled={payingPlanId === plan.id}
-              onClick={() => handleDemoPay(plan.id)}
+              onClick={() => handleCheckout(plan.id)}
               type="button"
             >
               <Crown size={16} />
-              {payingPlanId === plan.id ? '正在处理...' : '演示支付并开通'}
+              {payingPlanId === plan.id ? '正在处理...' : '沙盒支付并开通'}
             </button>
           </article>
         ))}

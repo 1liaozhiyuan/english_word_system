@@ -11,9 +11,10 @@ import {
   Target,
   XCircle,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { generateStructuredQuiz, recordAIQuestionAttempt } from '../api/ai';
 import { getErrorMessage } from '../api/client';
+import { submitContentReport } from '../api/contentReports';
 import { getFavoritesPaginated } from '../api/favorites';
 import { getMistakes, getNewStudy, getTodayReview, submitAnswer } from '../api/study';
 import { useAuth } from '../auth/AuthContext';
@@ -65,6 +66,7 @@ const quizSourceOptions: { value: QuizSource; label: string; description: string
 
 export function QuizPage() {
   const { token } = useAuth();
+  const [searchParams] = useSearchParams();
   const [questions, setQuestions] = React.useState<QuizQuestion[]>([]);
   const [records, setRecords] = React.useState<QuizRecord[]>([]);
   const [currentIndex, setCurrentIndex] = React.useState(0);
@@ -76,9 +78,14 @@ export function QuizPage() {
   const [aiQuestions, setAiQuestions] = React.useState<AIQuizQuestion[]>([]);
   const [aiAnswers, setAiAnswers] = React.useState<Record<string, string>>({});
   const [aiSubmitted, setAiSubmitted] = React.useState<Record<string, boolean>>({});
+  const [aiReported, setAiReported] = React.useState<Record<string, string>>({});
+  const [aiDifficulty, setAiDifficulty] = React.useState('基础');
+  const [aiQuestionType, setAiQuestionType] = React.useState('混合');
+  const [aiTimeLimit, setAiTimeLimit] = React.useState(0);
+  const [aiStartedAt, setAiStartedAt] = React.useState<number | null>(null);
   const [quizMode, setQuizMode] = React.useState<QuizMode>('practice');
-  const [quizSource, setQuizSource] = React.useState<QuizSource>('mixed');
-  const [quizType, setQuizType] = React.useState<QuizTypeFilter>('mixed');
+  const [quizSource, setQuizSource] = React.useState<QuizSource>((searchParams.get('source') as QuizSource) || 'mixed');
+  const [quizType, setQuizType] = React.useState<QuizTypeFilter>(searchParams.get('mode') === 'spelling' ? 'spelling' : 'mixed');
   const [questionCount, setQuestionCount] = React.useState(12);
 
   React.useEffect(() => {
@@ -118,7 +125,10 @@ export function QuizPage() {
           ? 1
           : 0;
     const isCorrect = question.type === 'choice' ? quality === 3 : quality >= 2;
-    const studyMode: StudyMode = question.type === 'choice' ? 'en_to_cn' : 'spelling';
+    const requestedMode = searchParams.get('mode');
+    const studyMode: StudyMode = question.type === 'choice'
+      ? requestedMode === 'cn_to_en' || requestedMode === 'listening' ? requestedMode : 'en_to_cn'
+      : 'spelling';
 
     setIsSubmitting(true);
     try {
@@ -140,12 +150,16 @@ export function QuizPage() {
     setAiQuestions([]);
     setAiAnswers({});
     setAiSubmitted({});
+    setAiReported({});
+    setAiStartedAt(Date.now());
     try {
       const words = questions.map((question) => question.item.word);
-      setAiQuestions(await generateStructuredQuiz(token, words, '专项薄弱点测试'));
+      const quizLabel = `${aiDifficulty}难度 · ${aiQuestionType}题型 · 专项薄弱点测试`;
+      setAiQuestions(await generateStructuredQuiz(token, words, quizLabel));
       setMessage({ text: 'AI 已生成练习题。请先作答，提交后再查看答案和解析。', tone: 'success' });
     } catch (error) {
-      setMessage({ text: getErrorMessage(error), tone: 'error' });
+      setAiQuestions(buildFallbackAIQuestions(questions.map((question) => question.item.word), aiQuestionType));
+      setMessage({ text: `${getErrorMessage(error)} 已使用本地兜底题目。`, tone: 'info' });
     } finally {
       setIsAiLoading(false);
     }
@@ -157,6 +171,29 @@ export function QuizPage() {
     try {
       await recordAIQuestionAttempt(token, questionId, answer);
       setAiSubmitted((value) => ({ ...value, [questionId]: true }));
+    } catch (error) {
+      setMessage({ text: getErrorMessage(error), tone: 'error' });
+    }
+  }
+
+  function finishAIPractice(questionIds: string[]) {
+    setAiSubmitted((value) => ({
+      ...value,
+      ...Object.fromEntries(questionIds.map((id) => [id, true])),
+    }));
+    setMessage({ text: '已交卷，未作答题目会按错误统计在本轮报告中。', tone: 'info' });
+  }
+
+  async function reportAIQuestion(question: AIQuizQuestion, reason: string) {
+    try {
+      await submitContentReport(token, {
+        source_type: 'ai_question',
+        source_id: question.id,
+        reason,
+        content: `题干：${question.prompt}\n答案：${question.answer}\n解析：${question.explanation || '无'}`,
+      });
+      setAiReported((value) => ({ ...value, [question.id]: reason }));
+      setMessage({ text: '已提交题目反馈，后台可审核处理。', tone: 'success' });
     } catch (error) {
       setMessage({ text: getErrorMessage(error), tone: 'error' });
     }
@@ -226,8 +263,13 @@ export function QuizPage() {
         isLoading={isAiLoading}
         onAnswer={(id, answer) => setAiAnswers((value) => ({ ...value, [id]: answer }))}
         onSubmit={submitAIQuestion}
+        onReport={reportAIQuestion}
         questions={aiQuestions}
         submitted={aiSubmitted}
+        onFinish={finishAIPractice}
+        timeLimitMinutes={aiTimeLimit}
+        startedAt={aiStartedAt}
+        reported={aiReported}
       />
 
       <section className="surface mb-5 rounded-lg p-4 sm:p-5">
@@ -245,6 +287,14 @@ export function QuizPage() {
             <button className={quizMode === 'formal' ? 'button-primary' : 'button-secondary'} onClick={() => setQuizMode('formal')} type="button">
               正式
             </button>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 md:grid-cols-4">
+          <SelectControl label="AI 难度" value={aiDifficulty} onChange={setAiDifficulty} options={['基础', '考试', '进阶']} />
+          <SelectControl label="AI 题型" value={aiQuestionType} onChange={setAiQuestionType} options={['混合', '易混词', '拼写', '搭配', '例句填空']} />
+          <SelectControl label="考试计时" value={String(aiTimeLimit)} onChange={(value) => setAiTimeLimit(Number(value))} options={['0', '5', '10', '20']} labels={{ '0': '不限时', '5': '5 分钟', '10': '10 分钟', '20': '20 分钟' }} />
+          <div className="rounded-lg border p-3 text-sm" style={{ borderColor: 'var(--line)', background: 'var(--paper)', color: 'var(--muted)' }}>
+            AI 题目生成后会自动入库，后台可审核和复用。
           </div>
         </div>
 
@@ -583,22 +633,66 @@ function AIPracticePanel({
   answers,
   isLoading,
   onAnswer,
+  onFinish,
+  onReport,
   onSubmit,
   questions,
+  reported,
   submitted,
+  startedAt,
+  timeLimitMinutes,
 }: {
   answers: Record<string, string>;
   isLoading: boolean;
   onAnswer: (id: string, answer: string) => void;
+  onFinish: (questionIds: string[]) => void;
+  onReport: (question: AIQuizQuestion, reason: string) => void;
   onSubmit: (id: string) => void;
   questions: AIQuizQuestion[];
+  reported: Record<string, string>;
   submitted: Record<string, boolean>;
+  startedAt: number | null;
+  timeLimitMinutes: number;
 }) {
   const [currentIndex, setCurrentIndex] = React.useState(0);
+  const [now, setNow] = React.useState(Date.now());
 
   React.useEffect(() => {
     setCurrentIndex(0);
   }, [questions]);
+
+  const boundedIndex = questions.length ? Math.min(currentIndex, questions.length - 1) : 0;
+  const question = questions[boundedIndex];
+  const value = question ? answers[question.id] ?? '' : '';
+  const isSubmitted = question ? Boolean(submitted[question.id]) : false;
+  const isCorrect = question ? isAIAnswerCorrect(question, value) : false;
+  const isLast = questions.length > 0 && boundedIndex + 1 >= questions.length;
+  const submittedQuestions = questions.filter((item) => submitted[item.id]);
+  const correctQuestions = submittedQuestions.filter((item) => isAIAnswerCorrect(item, answers[item.id] ?? ''));
+  const wrongQuestions = submittedQuestions.filter((item) => !isAIAnswerCorrect(item, answers[item.id] ?? ''));
+  const isComplete = questions.length > 0 && submittedQuestions.length === questions.length;
+  const remainingSeconds = timeLimitMinutes && startedAt
+    ? Math.max(0, Math.ceil((startedAt + timeLimitMinutes * 60_000 - now) / 1000))
+    : null;
+
+  React.useEffect(() => {
+    if (!timeLimitMinutes || !startedAt || isComplete) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [timeLimitMinutes, startedAt, isComplete]);
+
+  React.useEffect(() => {
+    if (remainingSeconds !== 0 || isComplete) return;
+    onFinish(questions.map((item) => item.id));
+  }, [remainingSeconds, isComplete, questions, onFinish]);
+
+  React.useEffect(() => {
+    if (!question || !isSubmitted || !isCorrect || isLast) return;
+    const timer = window.setTimeout(() => {
+      setCurrentIndex((value) => Math.min(value + 1, questions.length - 1));
+    }, 360);
+    return () => window.clearTimeout(timer);
+  }, [isSubmitted, isCorrect, isLast, question?.id, questions.length]);
 
   if (isLoading) {
     return (
@@ -607,20 +701,42 @@ function AIPracticePanel({
       </section>
     );
   }
-  if (!questions.length) return null;
-  const question = questions[Math.min(currentIndex, questions.length - 1)];
-  const value = answers[question.id] ?? '';
-  const isSubmitted = Boolean(submitted[question.id]);
-  const isCorrect = normalizeAnswer(value) === normalizeAnswer(question.answer);
-  const isLast = currentIndex + 1 >= questions.length;
-
-  React.useEffect(() => {
-    if (!isSubmitted || !isCorrect || isLast) return;
-    const timer = window.setTimeout(() => {
-      setCurrentIndex((value) => Math.min(value + 1, questions.length - 1));
-    }, 360);
-    return () => window.clearTimeout(timer);
-  }, [isSubmitted, isCorrect, isLast, question.id, questions.length]);
+  if (!question) return null;
+  if (isComplete) {
+    return (
+      <section className="surface mb-5 rounded-lg p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--green)' }}>AI Result</p>
+            <h3 className="mt-1 text-2xl font-semibold">AI 练习作答情况</h3>
+          </div>
+          <span className="text-4xl font-semibold" style={{ color: correctQuestions.length === questions.length ? 'var(--green)' : 'var(--ink)' }}>
+            {Math.round((correctQuestions.length / questions.length) * 100)}%
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <SummaryMetric label="题目数" value={questions.length} />
+          <SummaryMetric label="答对" value={correctQuestions.length} />
+          <SummaryMetric label="答错" value={wrongQuestions.length} />
+        </div>
+        <p className="mt-4 text-sm leading-7" style={{ color: 'var(--muted)' }}>
+          {getAIPracticeAdvice(correctQuestions.length, questions.length, wrongQuestions)}
+        </p>
+        {wrongQuestions.length > 0 && (
+          <div className="mt-4 grid gap-2">
+            {wrongQuestions.map((item) => (
+              <div className="rounded-lg border p-3 text-sm" key={item.id} style={{ borderColor: 'var(--line)', background: 'var(--paper)' }}>
+                <div className="font-semibold" style={{ color: 'var(--ink)' }}>{item.prompt}</div>
+                <div className="mt-1" style={{ color: 'var(--muted)' }}>你的答案：{answers[item.id] || '未作答'}</div>
+                <div className="mt-1" style={{ color: 'var(--green)' }}>正确答案：{formatAIAnswer(item)}</div>
+                {item.explanation && <div className="mt-1" style={{ color: 'var(--muted)' }}>解析：{item.explanation}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="surface mb-5 rounded-lg p-5">
@@ -629,6 +745,14 @@ function AIPracticePanel({
           <p className="text-xs font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--green)' }}>AI Practice</p>
           <h3 className="mt-1 text-2xl font-semibold">AI 生成练习</h3>
         </div>
+        {remainingSeconds !== null && (
+          <span className="chip" style={{ background: remainingSeconds <= 60 ? 'var(--red-soft)' : 'var(--panel)', color: remainingSeconds <= 60 ? 'var(--red)' : 'var(--muted)' }}>
+            剩余 {Math.floor(remainingSeconds / 60)}:{String(remainingSeconds % 60).padStart(2, '0')}
+          </span>
+        )}
+        <button className="button-secondary" onClick={() => onFinish(questions.map((item) => item.id))} type="button">
+          交卷
+        </button>
         <p className="max-w-xl text-sm leading-6" style={{ color: 'var(--muted)' }}>
           答案和解析会在提交后显示，避免提前暴露影响练习效果。
         </p>
@@ -684,10 +808,10 @@ function AIPracticePanel({
                     {isCorrect ? '回答正确' : '回答错误'}
                   </div>
                   {isCorrect ? (
-                    <div className="mt-1">正在进入下一题。</div>
+                    <div className="mt-1">{isLast ? '已完成全部 AI 练习。' : '正在进入下一题。'}</div>
                   ) : (
                     <>
-                      <div className="mt-1">正确答案：{question.answer}</div>
+                      <div className="mt-1">正确答案：{formatAIAnswer(question)}</div>
                       {question.explanation && <div className="mt-1">解析：{question.explanation}</div>}
                       <button
                         className="button-primary mt-3"
@@ -701,9 +825,51 @@ function AIPracticePanel({
                   )}
                 </div>
               )}
+              <div className="mt-4 flex flex-wrap gap-2">
+                {[
+                  ['inaccurate', '题目不准确'],
+                  ['wrong_answer', '答案错误'],
+                  ['bad_explanation', '解析不好'],
+                ].map(([reason, label]) => (
+                  <button
+                    className="button-secondary"
+                    disabled={Boolean(reported[question.id])}
+                    key={reason}
+                    onClick={() => onReport(question, reason)}
+                    type="button"
+                  >
+                    {reported[question.id] === reason ? '已反馈' : label}
+                  </button>
+                ))}
+              </div>
             </article>
       </div>
     </section>
+  );
+}
+
+function SelectControl({
+  label,
+  value,
+  onChange,
+  options,
+  labels = {},
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  labels?: Record<string, string>;
+}) {
+  return (
+    <label className="grid gap-2 text-sm font-semibold" style={{ color: 'var(--muted)' }}>
+      {label}
+      <select className="input" value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => (
+          <option key={option} value={option}>{labels[option] ?? option}</option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -759,8 +925,53 @@ function TypeReport({
   );
 }
 
+function isAIAnswerCorrect(question: AIQuizQuestion, userAnswer: string) {
+  const expected = question.answer ?? '';
+  const selectedOption = resolveAIOption(question, userAnswer);
+  const expectedOption = resolveAIOption(question, expected);
+  const normalizedUser = normalizeAnswer(selectedOption || userAnswer);
+  const normalizedExpected = normalizeAnswer(expectedOption || expected);
+  if (!normalizedUser || !normalizedExpected) return false;
+  return normalizedUser === normalizedExpected;
+}
+
+function resolveAIOption(question: AIQuizQuestion, answer: string) {
+  const index = getOptionIndex(answer);
+  if (index !== null && question.options[index]) return question.options[index];
+  const normalized = normalizeAnswer(answer);
+  return question.options.find((option) => normalizeAnswer(option) === normalized) ?? null;
+}
+
+function getOptionIndex(value: string) {
+  const match = value.trim().match(/^([a-d])(?:[.、\s]|$)/i);
+  if (!match) return null;
+  return match[1].toLowerCase().charCodeAt(0) - 97;
+}
+
 function normalizeAnswer(value: string) {
-  return value.trim().toLowerCase().replace(/^[a-d][.、\s]+/i, '');
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-d][.、\s]+/i, '')
+    .replace(/[’']/g, "'")
+    .replace(/[，。！？、,.!?;；:：()[\]{}"“”]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function formatAIAnswer(question: AIQuizQuestion) {
+  return resolveAIOption(question, question.answer) || question.answer;
+}
+
+function getAIPracticeAdvice(correct: number, total: number, wrongQuestions: AIQuizQuestion[]) {
+  if (!total) return '还没有作答记录。';
+  const rate = correct / total;
+  if (rate >= 0.9) return '本轮 AI 练习表现稳定，可以继续增加题目难度或切换到正式测试。';
+  if (rate >= 0.7) return '整体掌握不错，建议把错题中的相关单词加入今日复习，再做一轮变式题。';
+  const weakWords = wrongQuestions.map((item) => item.related_word).filter(Boolean).slice(0, 3).join('、');
+  return weakWords
+    ? `本轮暴露出薄弱点，优先复盘 ${weakWords}，再重新生成一组专项题。`
+    : '本轮错误偏多，建议先回到单词详情页看释义、例句和搭配，再重新练习。';
 }
 
 function buildFeedbackText(record: QuizRecord, quizMode: QuizMode) {
@@ -795,6 +1006,63 @@ function buildQuestions(items: StudyItem[], words: Word[], typeFilter: QuizTypeF
       options: type === 'choice' ? buildOptions(item.word, words, index) : [],
     };
   });
+}
+
+function buildFallbackAIQuestions(words: Word[], aiQuestionType: string): AIQuizQuestion[] {
+  return words.slice(0, 6).map((word, index) => {
+    const shouldSpell = aiQuestionType === '拼写' || (aiQuestionType === '混合' && index % 2 === 1);
+    const shouldBlank = aiQuestionType === '例句填空';
+    if (shouldSpell) {
+      return {
+        id: `fallback-${word.id}-spelling-${Date.now()}-${index}`,
+        type: 'spelling',
+        prompt: `根据中文释义写出英文单词：${word.meaning}`,
+        options: [],
+        answer: word.text,
+        explanation: `这个词是 ${word.text}，释义为 ${word.meaning}。`,
+        related_word: word.text,
+      };
+    }
+    if (shouldBlank) {
+      const sentence = word.example_sentence || `This is an example of ${word.text}.`;
+      return {
+        id: `fallback-${word.id}-blank-${Date.now()}-${index}`,
+        type: 'blank',
+        prompt: sentence.replace(new RegExp(escapeRegExp(word.text), 'i'), '____'),
+        options: [],
+        answer: word.text,
+        explanation: `空格处应填 ${word.text}。`,
+        related_word: word.text,
+      };
+    }
+    return {
+      id: `fallback-${word.id}-choice-${Date.now()}-${index}`,
+      type: 'choice',
+      prompt: `${word.text} 的中文释义是？`,
+      options: buildMeaningOptions(word, words, index),
+      answer: word.meaning,
+      explanation: `${word.text} 表示：${word.meaning}。`,
+      related_word: word.text,
+    };
+  });
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildMeaningOptions(word: Word, words: Word[], seed: number) {
+  const options = new Set<string>([word.meaning]);
+  seededSort(words.filter((item) => item.id !== word.id), seed)
+    .map((item) => item.meaning)
+    .forEach((meaning) => {
+      if (options.size < 4 && meaning) options.add(meaning);
+    });
+  for (const fallback of ['常见释义', '抽象概念', '动作或状态', '人物或事物']) {
+    if (options.size >= 4) break;
+    options.add(fallback);
+  }
+  return seededSort([...options], seed + 19);
 }
 
 function buildOptions(word: Word, words: Word[], seed: number) {

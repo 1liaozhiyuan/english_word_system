@@ -27,6 +27,8 @@ from app.schemas import (
     AnswerCreate,
     AnswerResult,
     AIExamplePayload,
+    AIMistakeAnalysisCreate,
+    AIMistakeAnalysisRead,
     AIMistakePayload,
     AIQuestionAttemptCreate,
     AIQuestionAttemptRead,
@@ -88,6 +90,9 @@ from app.schemas import (
     WordProgressRead,
     WordRead,
     WordUpdate,
+    WritingPromptRead,
+    WritingSubmissionCreate,
+    WritingSubmissionRead,
 )
 from app.services import (
     add_word_to_book,
@@ -133,6 +138,7 @@ from app.services import (
     get_word_book_progress_summary,
     get_word_book_with_count,
     get_word_detail_for_user,
+    get_writing_prompts,
     import_user_data,
     import_word_book_from_csv,
     parse_word_book_csv,
@@ -166,9 +172,14 @@ from app.services import (
     seed_demo_data,
     select_word_book,
     submit_speaking_attempt,
+    submit_writing,
+    list_writing_submissions,
     list_ai_examples_for_word,
+    list_mistake_analyses,
     save_ai_example,
+    save_mistake_analysis,
     save_ai_questions,
+    serialize_mistake_analysis,
     record_ai_question_attempt,
     update_word_book,
     update_word,
@@ -211,6 +222,7 @@ def build_study_item(item: UserWordProgress) -> StudyItem:
         interval_days=item.interval_days,
         correct_count=item.correct_count,
         wrong_count=item.wrong_count,
+        last_mistake_type=item.last_mistake_type,
         last_reviewed_at=item.last_reviewed_at,
         next_review_at=item.next_review_at,
         is_leech=item.is_leech,
@@ -408,6 +420,16 @@ def membership_demo_pay(
     session: Session = Depends(get_session),
 ) -> MembershipOrderRead:
     order = create_demo_membership_order(session, current_user, payload.plan_id)
+    return list_user_orders(session, current_user)[0]
+
+
+@app.post("/membership/orders/checkout", response_model=MembershipOrderRead)
+def membership_checkout(
+    payload: MembershipOrderCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> MembershipOrderRead:
+    create_demo_membership_order(session, current_user, payload.plan_id)
     return list_user_orders(session, current_user)[0]
 
 
@@ -912,6 +934,7 @@ def submit_answer(
         interval_days=progress.interval_days,
         next_review_at=progress.next_review_at,
         is_leech=progress.is_leech,
+        mistake_type=progress.last_mistake_type,
     )
 
 
@@ -1187,6 +1210,33 @@ def speaking_attempts(
     return list_speaking_attempts(session, current_user)
 
 
+@app.get("/writing/prompts", response_model=list[WritingPromptRead])
+def writing_prompts(
+    limit: int = Query(default=8, ge=1, le=30),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[WritingPromptRead]:
+    return [WritingPromptRead(**item) for item in get_writing_prompts(session, current_user, limit)]
+
+
+@app.post("/writing/submissions", response_model=WritingSubmissionRead)
+def create_writing_submission(
+    payload: WritingSubmissionCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> WritingSubmissionRead:
+    return submit_writing(session, current_user, payload.prompt, payload.content)
+
+
+@app.get("/writing/submissions", response_model=list[WritingSubmissionRead])
+def writing_submissions(
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[WritingSubmissionRead]:
+    return list_writing_submissions(session, current_user, limit)
+
+
 @app.get("/notifications", response_model=NotificationSummary)
 def notifications(
     current_user: User = Depends(get_current_user),
@@ -1236,6 +1286,34 @@ async def ai_analyze_mistakes(
 ) -> AITextResponse:
     record_ai_usage(session, current_user, "analyze_mistakes")
     return AITextResponse(content=await call_ai(analyze_mistakes_prompt(payload.words)))
+
+
+@app.get("/ai/mistake-analyses", response_model=list[AIMistakeAnalysisRead])
+def ai_mistake_analyses(
+    limit: int = Query(10, ge=1, le=50),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[AIMistakeAnalysisRead]:
+    return [
+        AIMistakeAnalysisRead(**serialize_mistake_analysis(item))
+        for item in list_mistake_analyses(session, current_user, limit)
+    ]
+
+
+@app.post("/ai/mistake-analyses", response_model=AIMistakeAnalysisRead)
+def create_ai_mistake_analysis(
+    payload: AIMistakeAnalysisCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> AIMistakeAnalysisRead:
+    item = save_mistake_analysis(
+        session,
+        current_user,
+        payload.word_ids,
+        payload.content,
+        payload.source,
+    )
+    return AIMistakeAnalysisRead(**serialize_mistake_analysis(item))
 
 
 @app.post("/ai/generate-quiz", response_model=AITextResponse)

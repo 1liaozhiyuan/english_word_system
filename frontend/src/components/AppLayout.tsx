@@ -1,57 +1,15 @@
-import {
-  ArrowUp,
-  Award,
-  Bell,
-  BarChart3,
-  BookOpen,
-  ChartNoAxesColumn,
-  ClipboardCheck,
-  Crown,
-  FileText,
-  Home,
-  Library,
-  LifeBuoy,
-  LogOut,
-  Moon,
-  NotebookTabs,
-  PanelsTopLeft,
-  Route,
-  RotateCcw,
-  Settings,
-  Sparkles,
-  Star,
-  Sun,
-} from 'lucide-react';
+import { ArrowUp, ChartNoAxesColumn, Dumbbell, Home, LayoutDashboard, LogOut, Moon, Settings, Sun } from 'lucide-react';
 import React from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 
-const links = [
-  { to: '/dashboard', label: '首页', icon: Home },
-  { to: '/word-books', label: '词库', icon: Library },
-  { to: '/study', label: '新词', icon: BookOpen },
-  { to: '/review', label: '复习', icon: RotateCcw },
-  { to: '/mistakes', label: '错词', icon: NotebookTabs },
-  { to: '/favorites', label: '收藏', icon: Star },
-  { to: '/quiz', label: '测试', icon: ClipboardCheck },
-  { to: '/stats', label: '统计', icon: ChartNoAxesColumn },
-  { to: '/learning-report', label: '报告', icon: BarChart3 },
-  { to: '/check-in', label: '打卡', icon: Award },
-  { to: '/learning-plan', label: '学习计划', icon: Route },
-  { to: '/learning-settings', label: '学习设置', icon: Settings },
-  { to: '/notifications', label: '消息', icon: Bell },
+const moduleNav = [
+  { to: '/dashboard', label: '首页', icon: LayoutDashboard },
+  { to: '/today', label: '今日任务', icon: Home },
+  { to: '/ability', label: '能力训练', icon: Dumbbell },
+  { to: '/review-data', label: '复盘数据', icon: ChartNoAxesColumn },
+  { to: '/services', label: '设置服务', icon: Settings },
 ];
-
-const extraLinks = [
-  { to: '/onboarding', label: '学习引导', icon: Sparkles },
-  { to: '/membership', label: '会员', icon: Crown },
-  { to: '/support', label: '反馈', icon: LifeBuoy },
-  { to: '/legal', label: '合规', icon: FileText },
-  { to: '/admin', label: '后台', icon: PanelsTopLeft },
-];
-
-const navigationLinks = [...links, ...extraLinks];
-const mobileLinks = navigationLinks;
 
 export function AppLayout() {
   const { user, logout } = useAuth();
@@ -81,7 +39,7 @@ export function AppLayout() {
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleScroll);
     };
-  }, [location.pathname]);
+  }, [location.pathname, location.search]);
 
   function handleLogout() {
     logout();
@@ -90,79 +48,51 @@ export function AppLayout() {
 
   return (
     <main className="app-shell">
-      <div className="mx-auto grid min-h-screen w-full max-w-[1540px] grid-cols-1 md:grid-cols-[260px_1fr]">
-        <aside
-          className="hidden border-r px-5 py-6 backdrop-blur md:sticky md:top-0 md:block md:h-screen"
-          style={{ borderColor: 'var(--line)', background: 'color-mix(in srgb, var(--paper) 94%, transparent)' }}
-        >
-          <BrandBlock />
+      <header className="top-app-bar">
+        <div className="mx-auto flex w-full max-w-[1540px] flex-col gap-3 px-4 py-3 md:px-8 xl:px-12">
+          <div className="flex items-center justify-between gap-3">
+            <BrandBlock />
+            <div className="flex items-center gap-2">
+              <button aria-label={dark ? '切换浅色模式' : '切换深色模式'} className="icon-button" onClick={() => setDark((value) => !value)} type="button">
+                {dark ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              <button aria-label={`退出账号 ${user?.email ?? ''}`} className="icon-button" onClick={handleLogout} type="button">
+                <LogOut size={18} />
+              </button>
+            </div>
+          </div>
 
-          <nav className="mt-6 grid gap-2">
-            {navigationLinks.map((link) => {
-              const Icon = link.icon;
+          <nav className="top-module-nav" aria-label="主功能导航">
+            {moduleNav.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.to;
               return (
-                <NavLink
-                  className={({ isActive }) => `nav-link ${isActive ? 'nav-link-active' : ''}`}
-                  key={link.to}
-                  to={link.to}
-                >
+                <NavLink className={`top-module-link ${isActive ? 'top-module-link-active' : ''}`} key={item.to} to={item.to}>
                   <Icon size={17} />
-                  {link.label}
+                  {item.label}
                 </NavLink>
               );
             })}
           </nav>
+        </div>
+      </header>
 
-          <AccountPanel
-            dark={dark}
-            email={user?.email}
-            onLogout={handleLogout}
-            onToggleTheme={() => setDark((value) => !value)}
-          />
-        </aside>
-
-        <section className="min-w-0 px-4 pb-24 pt-4 md:px-8 md:py-8 xl:px-12">
-          <MobileTopBar
-            dark={dark}
-            email={user?.email}
-            onLogout={handleLogout}
-            onToggleTheme={() => setDark((value) => !value)}
-          />
-          <Outlet />
-        </section>
+      <div className="mx-auto min-h-screen w-full max-w-[1540px] px-4 pb-24 pt-5 md:px-8 md:pb-10 xl:px-12">
+        <Outlet />
       </div>
-
-      <nav
-        className="fixed inset-x-0 bottom-0 z-30 flex gap-1 overflow-x-auto border-t px-2 py-2 backdrop-blur md:hidden"
-        style={{ borderColor: 'var(--line)', background: 'color-mix(in srgb, var(--paper) 94%, transparent)' }}
-      >
-        {mobileLinks.map((link) => {
-          const Icon = link.icon;
-          return (
-            <NavLink
-              className={({ isActive }) => `mobile-nav-link ${isActive ? 'mobile-nav-link-active' : ''}`}
-              key={link.to}
-              to={link.to}
-            >
-              <Icon size={18} />
-              <span>{link.label}</span>
-            </NavLink>
-          );
-        })}
-      </nav>
 
       {showBackTop && (
         <button
           aria-label="回到页面顶部"
-          className="fixed bottom-24 right-4 z-40 flex h-11 w-11 items-center justify-center rounded-lg border shadow-lg md:bottom-6 md:right-6"
+          className="back-top-button"
           onClick={() => {
             window.scrollTo({ top: 0, behavior: 'smooth' });
             document.documentElement.scrollTo?.({ top: 0, behavior: 'smooth' });
           }}
-          style={{ borderColor: 'var(--line)', background: 'var(--paper)', color: 'var(--green)' }}
           type="button"
         >
-          <ArrowUp size={20} />
+          <ArrowUp size={18} />
+          <span>顶部</span>
         </button>
       )}
     </main>
@@ -180,66 +110,13 @@ function BrandBlock() {
         W
       </div>
       <div className="min-w-0">
-        <p className="text-xs font-bold uppercase tracking-[0.16em]" style={{ color: 'var(--muted)' }}>
-          Vocabulary
+        <p className="text-xs font-bold uppercase tracking-normal" style={{ color: 'var(--muted)' }}>
+          AI English
         </p>
         <h1 className="text-xl font-semibold tracking-normal" style={{ color: 'var(--ink)' }}>
-          单词学习
+          智能英语学习
         </h1>
       </div>
     </NavLink>
-  );
-}
-
-function AccountPanel({
-  dark,
-  email,
-  onToggleTheme,
-  onLogout,
-}: {
-  dark: boolean;
-  email?: string;
-  onToggleTheme: () => void;
-  onLogout: () => void;
-}) {
-  return (
-    <div className="mt-6 rounded-lg border p-4" style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}>
-      <p className="text-xs font-bold" style={{ color: 'var(--muted)' }}>当前账号</p>
-      <p className="mt-1 truncate text-sm font-semibold" style={{ color: 'var(--ink)' }}>{email}</p>
-      <button className="button-secondary mt-3 w-full" onClick={onToggleTheme} type="button">
-        {dark ? <Sun size={16} /> : <Moon size={16} />}
-        {dark ? '浅色模式' : '深色模式'}
-      </button>
-      <button className="button-secondary mt-2 w-full" onClick={onLogout} type="button">
-        <LogOut size={16} />
-        退出登录
-      </button>
-    </div>
-  );
-}
-
-function MobileTopBar({
-  dark,
-  email,
-  onToggleTheme,
-  onLogout,
-}: {
-  dark: boolean;
-  email?: string;
-  onToggleTheme: () => void;
-  onLogout: () => void;
-}) {
-  return (
-    <div className="mb-4 flex items-center justify-between gap-3 md:hidden">
-      <BrandBlock />
-      <div className="flex items-center gap-2">
-        <button aria-label={dark ? '切换浅色模式' : '切换深色模式'} className="icon-button" onClick={onToggleTheme} type="button">
-          {dark ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
-        <button aria-label={`退出账号 ${email ?? ''}`} className="icon-button" onClick={onLogout} type="button">
-          <LogOut size={18} />
-        </button>
-      </div>
-    </div>
   );
 }

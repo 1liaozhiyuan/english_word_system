@@ -13,10 +13,10 @@ export function PageHeader({
       style={{ borderColor: 'var(--line)' }}
     >
       <div className="min-w-0">
-        <p className="mb-2 text-xs font-bold uppercase tracking-[0.18em]" style={{ color: 'var(--muted)' }}>
+        <p className="mb-2 text-xs font-bold uppercase tracking-normal" style={{ color: 'var(--muted)' }}>
           Learning Desk
         </p>
-        <h2 className="text-3xl font-semibold tracking-normal md:text-4xl" style={{ color: 'var(--ink)' }}>
+        <h2 className="text-3xl font-semibold tracking-normal md:text-[34px]" style={{ color: 'var(--ink)' }}>
           {title}
         </h2>
         {description && (
